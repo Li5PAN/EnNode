@@ -1,0 +1,7 @@
+[
+  { "id": 1, "name": "高等数学", "teacher": "李老师", "credit": 4, "hours": 64 },
+  { "id": 2, "name": "大学英语", "teacher": "王老师", "credit": 3, "hours": 48 },
+  { "id": 3, "name": "数据结构", "teacher": "张老师", "credit": 4, "hours": 64 },
+  { "id": 4, "name": "操作系统", "teacher": "赵老师", "credit": 3, "hours": 48 },
+  { "id": 5, "name": "计算机网络", "teacher": "孙老师", "credit": 3, "hours": 48 }
+]
