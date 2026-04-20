@@ -2,129 +2,297 @@ const express = require('express');
 const router = express.Router();
 const { authMiddleware } = require('../middleware/auth');
 
-// ==================== 模拟单词数据库 ====================
-const MOCK_WORDS_DATA = {
+// ==================== 单词数据库 ====================
+const mockWordsData = {
   hello: {
+    word: 'hello',
     wordId: 1,
-    englishWord: 'hello',
-    phoneticUk: 'həˈləʊ',
-    phoneticUs: 'həˈloʊ',
-    chineseMeaning: 'int. 喂；你好 n. 表示问候',
-    exampleSentence: 'Hello, how are you?',
-    exampleTranslation: '你好，你好吗？',
-    isCollected: false
+    ukPhonetic: 'həˈləʊ',
+    usPhonetic: 'həˈloʊ',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=hello&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=hello&type=2',
+    meanings: ['int. 喂；你好', 'n. 表示问候'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'Hello, how are you?', translation: '你好，你好吗？', sentenceSpeech: '' },
+      { sentence: 'Say hello to your family for me.', translation: '代我向你的家人问好。', sentenceSpeech: '' }
+    ],
+    wordForms: []
   },
   apple: {
+    word: 'apple',
     wordId: 2,
-    englishWord: 'apple',
-    phoneticUk: 'ˈæpl',
-    phoneticUs: 'ˈæpl',
-    chineseMeaning: 'n. 苹果；苹果树；苹果公司',
-    exampleSentence: 'An apple a day keeps the doctor away.',
-    exampleTranslation: '一天一苹果，医生远离我。',
-    isCollected: true
+    ukPhonetic: 'ˈæpl',
+    usPhonetic: 'ˈæpl',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=apple&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=apple&type=2',
+    meanings: ['n. 苹果；苹果树；苹果公司'],
+    webMeanings: [
+      { phrase: 'Apple Inc.', meaning: '苹果公司' },
+      { phrase: 'apple pie', meaning: '苹果派' }
+    ],
+    examples: [
+      { sentence: 'An apple a day keeps the doctor away.', translation: '一天一苹果，医生远离我。', sentenceSpeech: '' },
+      { sentence: 'I like eating apples.', translation: '我喜欢吃苹果。', sentenceSpeech: '' }
+    ],
+    wordForms: ['apples']
   },
   world: {
+    word: 'world',
     wordId: 3,
-    englishWord: 'world',
-    phoneticUk: 'wɜːld',
-    phoneticUs: 'wɜːrld',
-    chineseMeaning: 'n. 世界；领域；世俗',
-    exampleSentence: 'The world is beautiful.',
-    exampleTranslation: '世界是美丽的。',
-    isCollected: false
+    ukPhonetic: 'wɜːld',
+    usPhonetic: 'wɜːrld',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=world&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=world&type=2',
+    meanings: ['n. 世界；领域；世俗'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'The world is beautiful.', translation: '世界是美丽的。', sentenceSpeech: '' }
+    ],
+    wordForms: []
   },
   study: {
+    word: 'study',
     wordId: 4,
-    englishWord: 'study',
-    phoneticUk: 'ˈstʌdi',
-    phoneticUs: 'ˈstʌdi',
-    chineseMeaning: 'n. 学习，研究 vt. 学习；考虑',
-    exampleSentence: 'I study English every day.',
-    exampleTranslation: '我每天学习英语。',
-    isCollected: false
+    ukPhonetic: 'ˈstʌdi',
+    usPhonetic: 'ˈstʌdi',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=study&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=study&type=2',
+    meanings: ['n. 学习，研究', 'vt. 学习；考虑'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'I study English every day.', translation: '我每天学习英语。', sentenceSpeech: '' }
+    ],
+    wordForms: ['studies', 'studied', 'studying']
   },
   learn: {
+    word: 'learn',
     wordId: 5,
-    englishWord: 'learn',
-    phoneticUk: 'lɜːn',
-    phoneticUs: 'lɜːrn',
-    chineseMeaning: 'vt. 学习；得知 vi. 学习；获悉',
-    exampleSentence: 'We learn something new every day.',
-    exampleTranslation: '我们每天都学到新东西。',
-    isCollected: true
+    ukPhonetic: 'lɜːn',
+    usPhonetic: 'lɜːrn',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=learn&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=learn&type=2',
+    meanings: ['vt. 学习；得知', 'vi. 学习；获悉'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'We learn something new every day.', translation: '我们每天都学到新东西。', sentenceSpeech: '' }
+    ],
+    wordForms: ['learns', 'learned', 'learning']
   },
   practice: {
+    word: 'practice',
     wordId: 6,
-    englishWord: 'practice',
-    phoneticUk: 'ˈpræktɪs',
-    phoneticUs: 'ˈpræktɪs',
-    chineseMeaning: 'n. 实践；练习 vt. 练习；实习',
-    exampleSentence: 'Practice makes perfect.',
-    exampleTranslation: '熟能生巧。',
-    isCollected: false
+    ukPhonetic: 'ˈpræktɪs',
+    usPhonetic: 'ˈpræktɪs',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=practice&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=practice&type=2',
+    meanings: ['n. 实践；练习', 'vt. 练习；实习'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'Practice makes perfect.', translation: '熟能生巧。', sentenceSpeech: '' }
+    ],
+    wordForms: ['practices', 'practiced', 'practicing']
   },
   improve: {
+    word: 'improve',
     wordId: 7,
-    englishWord: 'improve',
-    phoneticUk: 'ɪmˈpruːv',
-    phoneticUs: 'ɪmˈpruːv',
-    chineseMeaning: 'vt. 改善，增进 vi. 改善，变得更好',
-    exampleSentence: 'I want to improve my English.',
-    exampleTranslation: '我想提高我的英语水平。',
-    isCollected: false
+    ukPhonetic: 'ɪmˈpruːv',
+    usPhonetic: 'ɪmˈpruːv',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=improve&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=improve&type=2',
+    meanings: ['vt. 改善，增进', 'vi. 改善，变得更好'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'I want to improve my English.', translation: '我想提高我的英语水平。', sentenceSpeech: '' }
+    ],
+    wordForms: ['improves', 'improved', 'improving']
   },
   knowledge: {
+    word: 'knowledge',
     wordId: 8,
-    englishWord: 'knowledge',
-    phoneticUk: 'ˈnɒlɪdʒ',
-    phoneticUs: 'ˈnɑːlɪdʒ',
-    chineseMeaning: 'n. 知识，学问；知道',
-    exampleSentence: 'Knowledge is power.',
-    exampleTranslation: '知识就是力量。',
-    isCollected: false
+    ukPhonetic: 'ˈnɒlɪdʒ',
+    usPhonetic: 'ˈnɑːlɪdʒ',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=knowledge&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=knowledge&type=2',
+    meanings: ['n. 知识，学问；知道'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'Knowledge is power.', translation: '知识就是力量。', sentenceSpeech: '' }
+    ],
+    wordForms: []
   },
   education: {
+    word: 'education',
     wordId: 9,
-    englishWord: 'education',
-    phoneticUk: 'ˌedʒuˈkeɪʃn',
-    phoneticUs: 'ˌedʒuˈkeɪʃn',
-    chineseMeaning: 'n. 教育；培养',
-    exampleSentence: 'Education is very important.',
-    exampleTranslation: '教育非常重要。',
-    isCollected: false
+    ukPhonetic: 'ˌedʒuˈkeɪʃn',
+    usPhonetic: 'ˌedʒuˈkeɪʃn',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=education&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=education&type=2',
+    meanings: ['n. 教育；培养'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'Education is very important.', translation: '教育非常重要。', sentenceSpeech: '' }
+    ],
+    wordForms: []
   },
   teacher: {
+    word: 'teacher',
     wordId: 10,
-    englishWord: 'teacher',
-    phoneticUk: 'ˈtiːtʃə(r)',
-    phoneticUs: 'ˈtiːtʃər',
-    chineseMeaning: 'n. 教师；导师',
-    exampleSentence: 'My teacher is very kind.',
-    exampleTranslation: '我的老师很和蔼。',
-    isCollected: true
+    ukPhonetic: 'ˈtiːtʃə(r)',
+    usPhonetic: 'ˈtiːtʃər',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=teacher&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=teacher&type=2',
+    meanings: ['n. 教师；导师'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'My teacher is very kind.', translation: '我的老师很和蔼。', sentenceSpeech: '' }
+    ],
+    wordForms: ['teachers']
   },
   student: {
+    word: 'student',
     wordId: 11,
-    englishWord: 'student',
-    phoneticUk: 'ˈstjuːdnt',
-    phoneticUs: 'ˈstuːdnt',
-    chineseMeaning: 'n. 学生；学者',
-    exampleSentence: 'I am a student.',
-    exampleTranslation: '我是一名学生。',
-    isCollected: false
+    ukPhonetic: 'ˈstjuːdnt',
+    usPhonetic: 'ˈstuːdnt',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=student&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=student&type=2',
+    meanings: ['n. 学生；学者'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'I am a student.', translation: '我是一名学生。', sentenceSpeech: '' }
+    ],
+    wordForms: ['students']
+  },
+  book: {
+    word: 'book',
+    wordId: 12,
+    ukPhonetic: 'bʊk',
+    usPhonetic: 'bʊk',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=book&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=book&type=2',
+    meanings: ['n. 书籍；卷；账簿', 'vt. 预订；登记'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'I love reading books.', translation: '我喜欢读书。', sentenceSpeech: '' }
+    ],
+    wordForms: ['books', 'booked', 'booking']
+  },
+  computer: {
+    word: 'computer',
+    wordId: 13,
+    ukPhonetic: 'kəmˈpjuːtə',
+    usPhonetic: 'kəmˈpjuːtər',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=computer&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=computer&type=2',
+    meanings: ['n. 计算机；电脑'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'I use my computer every day.', translation: '我每天使用电脑。', sentenceSpeech: '' }
+    ],
+    wordForms: ['computers']
+  },
+  english: {
+    word: 'English',
+    wordId: 14,
+    ukPhonetic: 'ˈɪŋɡlɪʃ',
+    usPhonetic: 'ˈɪŋɡlɪʃ',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=English&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=English&type=2',
+    meanings: ['n. 英语；英文', 'adj. 英国的；英语的'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'I am learning English.', translation: '我正在学习英语。', sentenceSpeech: '' }
+    ],
+    wordForms: []
+  },
+  school: {
+    word: 'school',
+    wordId: 15,
+    ukPhonetic: 'skuːl',
+    usPhonetic: 'skuːl',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=school&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=school&type=2',
+    meanings: ['n. 学校；学院；学派'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'I go to school every day.', translation: '我每天去学校。', sentenceSpeech: '' }
+    ],
+    wordForms: ['schools']
+  },
+  family: {
+    word: 'family',
+    wordId: 16,
+    ukPhonetic: 'ˈfæməli',
+    usPhonetic: 'ˈfæməli',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=family&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=family&type=2',
+    meanings: ['n. 家庭；家族；子女'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'My family is very happy.', translation: '我的家庭很幸福。', sentenceSpeech: '' }
+    ],
+    wordForms: ['families']
+  },
+  friend: {
+    word: 'friend',
+    wordId: 17,
+    ukPhonetic: 'frend',
+    usPhonetic: 'frend',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=friend&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=friend&type=2',
+    meanings: ['n. 朋友；助手'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'She is my best friend.', translation: '她是我最好的朋友。', sentenceSpeech: '' }
+    ],
+    wordForms: ['friends']
+  },
+  happy: {
+    word: 'happy',
+    wordId: 18,
+    ukPhonetic: 'ˈhæpi',
+    usPhonetic: 'ˈhæpi',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=happy&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=happy&type=2',
+    meanings: ['adj. 快乐的；幸福的；高兴的'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'I am very happy today.', translation: '我今天很开心。', sentenceSpeech: '' }
+    ],
+    wordForms: ['happier', 'happiest', 'happiness']
+  },
+  time: {
+    word: 'time',
+    wordId: 19,
+    ukPhonetic: 'taɪm',
+    usPhonetic: 'taɪm',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=time&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=time&type=2',
+    meanings: ['n. 时间；时代；次数', 'vt. 为...安排时间'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'Time waits for no one.', translation: '时间不等人。', sentenceSpeech: '' }
+    ],
+    wordForms: ['times', 'timed', 'timing']
+  },
+  day: {
+    word: 'day',
+    wordId: 20,
+    ukPhonetic: 'deɪ',
+    usPhonetic: 'deɪ',
+    ukSpeech: 'https://dict.youdao.com/dictvoice?audio=day&type=1',
+    usSpeech: 'https://dict.youdao.com/dictvoice?audio=day&type=2',
+    meanings: ['n. 一天；白天；时期'],
+    webMeanings: [],
+    examples: [
+      { sentence: 'What a beautiful day!', translation: '多么美好的一天！', sentenceSpeech: '' }
+    ],
+    wordForms: ['days']
   }
 };
 
-// ==================== 收藏数据 ====================
-let mockCollections = [
-  { collectionId: 1, wordId: 2, englishWord: 'apple', phoneticUk: 'ˈæpl', phoneticUs: 'ˈæpl', chineseMeaning: 'n. 苹果；苹果树；苹果公司', exampleSentence: 'An apple a day keeps the doctor away.', exampleTranslation: '一天一苹果，医生远离我。' },
-  { collectionId: 2, wordId: 5, englishWord: 'learn', phoneticUk: 'lɜːn', phoneticUs: 'lɜːrn', chineseMeaning: 'vt. 学习；得知 vi. 学习；获悉', exampleSentence: 'We learn something new every day.', exampleTranslation: '我们每天都学到新东西。' },
-  { collectionId: 3, wordId: 10, englishWord: 'teacher', phoneticUk: 'ˈtiːtʃə(r)', phoneticUs: 'ˈtiːtʃər', chineseMeaning: 'n. 教师；导师', exampleSentence: 'My teacher is very kind.', exampleTranslation: '我的老师很和蔼。' }
-];
-
 // ==================== 中文到英文映射 ====================
-const CHINESE_TO_ENGLISH = {
+const chineseToEnglishMap = {
   '苹果': 'apple',
   '你好': 'hello',
   '世界': 'world',
@@ -135,261 +303,350 @@ const CHINESE_TO_ENGLISH = {
   '知识': 'knowledge',
   '教育': 'education',
   '老师': 'teacher',
-  '学生': 'student'
+  '学生': 'student',
+  '书': 'book',
+  '电脑': 'computer',
+  '英语': 'english',
+  '学校': 'school',
+  '家庭': 'family',
+  '朋友': 'friend',
+  '快乐': 'happy',
+  '时间': 'time',
+  '天': 'day'
 };
 
-// 检测是否包含中文
-const isChinese = (text) => /[\u4e00-\u9fa5]/.test(text);
+// ==================== 收藏单词列表（根据用户区分）====================
+const mockFavoriteWordsData = {
+  student: [
+    { ...mockWordsData.hello, collectionId: 1 },
+    { ...mockWordsData.apple, collectionId: 2 },
+    { ...mockWordsData.world, collectionId: 3 },
+    { ...mockWordsData.study, collectionId: 4 }
+  ],
+  lisi: [
+    { ...mockWordsData.learn, collectionId: 1 },
+    { ...mockWordsData.practice, collectionId: 2 },
+    { ...mockWordsData.improve, collectionId: 3 },
+    { ...mockWordsData.knowledge, collectionId: 4 },
+    { ...mockWordsData.education, collectionId: 5 }
+  ],
+  zhangsan: [
+    { ...mockWordsData.english, collectionId: 1 },
+    { ...mockWordsData.computer, collectionId: 2 },
+    { ...mockWordsData.book, collectionId: 3 },
+    { ...mockWordsData.family, collectionId: 4 },
+    { ...mockWordsData.friend, collectionId: 5 },
+    { ...mockWordsData.happy, collectionId: 6 }
+  ]
+};
 
 // 模拟延迟
 const delay = (ms = 300) => new Promise(resolve => setTimeout(resolve, ms));
 
+// 获取当前用户名
+const getUsername = (req) => {
+  return req.user?.username || 'student';
+};
+
 /**
  * GET /api/student-words
- * 获取学生单词列表（分页）
- * Query: englishWord, chineseMeaning, pageNum, pageSize
+ * 获取单词列表（带搜索功能，支持中英文）
+ * @query {string} keyword - 搜索关键词（可选）
+ * @query {number} page - 页码（默认1）
+ * @query {number} pageSize - 每页数量（默认10）
  */
 router.get('/', authMiddleware, async (req, res) => {
   await delay(300);
-  const { englishWord, chineseMeaning, pageNum = 1, pageSize = 10 } = req.query;
-
-  let words = Object.values(MOCK_WORDS_DATA);
-
-  // 英文单词模糊搜索
-  if (englishWord) {
-    words = words.filter(w => w.englishWord.toLowerCase().includes(englishWord.toLowerCase()));
+  const { keyword, page = 1, pageSize = 10 } = req.query;
+  
+  let words = Object.values(mockWordsData);
+  
+  // 搜索功能：支持中英文
+  if (keyword) {
+    const lowerKeyword = keyword.toLowerCase().trim();
+    
+    // 检查是否是中文
+    if (/[\u4e00-\u9fa5]/.test(keyword)) {
+      const englishWord = chineseToEnglishMap[keyword];
+      if (englishWord && mockWordsData[englishWord]) {
+        words = [mockWordsData[englishWord]];
+      } else {
+        // 中文模糊匹配：查找含义中包含该中文的单词
+        words = words.filter(w => 
+          w.meanings.some(m => m.includes(keyword)) ||
+          w.webMeanings.some(wm => wm.meaning.includes(keyword))
+        );
+      }
+    } else {
+      // 英文搜索：精确匹配或模糊匹配
+      if (mockWordsData[lowerKeyword]) {
+        words = [mockWordsData[lowerKeyword]];
+      } else {
+        words = words.filter(w => 
+          w.word.toLowerCase().includes(lowerKeyword) ||
+          w.meanings.some(m => m.toLowerCase().includes(lowerKeyword))
+        );
+      }
+    }
   }
-
-  // 中文释义模糊搜索
-  if (chineseMeaning) {
-    words = words.filter(w => w.chineseMeaning.includes(chineseMeaning));
-  }
-
+  
+  // 分页
   const total = words.length;
-  const start = (parseInt(pageNum) - 1) * parseInt(pageSize);
+  const start = (page - 1) * pageSize;
   const end = start + parseInt(pageSize);
-  const rows = words.slice(start, end);
-
-  return res.json({ code: 200, total, rows });
-});
-
-/**
- * GET /api/student-words/all
- * 获取所有单词（无分页）
- */
-router.get('/all', authMiddleware, async (req, res) => {
-  await delay(300);
-  const words = Object.values(MOCK_WORDS_DATA);
-  return res.json({ code: 200, data: words });
+  const rows = words.slice(start, end).map(w => ({
+    ...w,
+    englishWord: w.word,
+    chineseMeaning: w.meanings.join('；')
+  }));
+  
+  return res.json({
+    code: 200,
+    total,
+    page: parseInt(page),
+    pageSize: parseInt(pageSize),
+    rows,
+    records: words.slice(start, end)
+  });
 });
 
 /**
  * GET /api/student-words/search
  * 搜索单词（支持中英文）
- * Query: keyword
+ * @query {string} keyword - 搜索关键词
  */
 router.get('/search', authMiddleware, async (req, res) => {
   await delay(300);
   const { keyword } = req.query;
-
+  
   if (!keyword) {
-    return res.json({ code: 200, data: null });
+    return res.json({ success: false, message: '请输入搜索关键词' });
   }
-
-  let searchKey = keyword;
-
-  // 中文转英文
-  if (isChinese(keyword)) {
-    const englishWord = CHINESE_TO_ENGLISH[keyword];
-    if (englishWord) {
-      searchKey = englishWord;
-    } else {
-      return res.json({ code: 200, data: null, message: `未找到"${keyword}"对应的英文单词` });
+  
+  const lowerKeyword = keyword.toLowerCase().trim();
+  
+  // 先检查是否是中文
+  if (/[\u4e00-\u9fa5]/.test(keyword)) {
+    const englishWord = chineseToEnglishMap[keyword];
+    if (englishWord && mockWordsData[englishWord]) {
+      return res.json({ success: true, data: mockWordsData[englishWord] });
     }
   }
-
-  const wordData = MOCK_WORDS_DATA[searchKey.toLowerCase()];
-
-  if (!wordData) {
-    return res.json({ code: 200, data: null });
+  
+  // 检查英文单词
+  if (mockWordsData[lowerKeyword]) {
+    return res.json({ success: true, data: mockWordsData[lowerKeyword] });
   }
-
-  // 构建完整返回格式
-  const result = {
-    word: wordData.englishWord,
-    wordId: wordData.wordId,
-    ukPhonetic: wordData.phoneticUk || '',
-    usPhonetic: wordData.phoneticUs || '',
-    ukSpeech: wordData.phoneticUk ? `https://dict.youdao.com/dictvoice?audio=${wordData.englishWord}&type=1` : '',
-    usSpeech: wordData.phoneticUs ? `https://dict.youdao.com/dictvoice?audio=${wordData.englishWord}&type=2` : '',
-    meanings: wordData.chineseMeaning ? [wordData.chineseMeaning] : [],
-    wordForms: [],
-    examples: wordData.exampleSentence ? [{
-      sentence: wordData.exampleSentence,
-      translation: wordData.exampleTranslation || '',
-      sentenceSpeech: ''
-    }] : [],
-    webMeanings: [],
-    isCollected: wordData.isCollected
-  };
-
-  return res.json({ code: 200, data: result });
-});
-
-/**
- * GET /api/student-words/collections
- * 获取收藏的单词列表
- * Query: englishWord, pageNum, pageSize
- */
-router.get('/collections', authMiddleware, async (req, res) => {
-  await delay(300);
-  const { englishWord, pageNum = 1, pageSize = 100 } = req.query;
-
-  let collections = [...mockCollections];
-
-  // 英文单词模糊搜索
-  if (englishWord) {
-    collections = collections.filter(c => c.englishWord.toLowerCase().includes(englishWord.toLowerCase()));
+  
+  // 模糊匹配
+  const matched = Object.values(mockWordsData).find(w => 
+    w.word.toLowerCase().includes(lowerKeyword) ||
+    w.meanings.some(m => m.includes(keyword))
+  );
+  
+  if (matched) {
+    return res.json({ success: true, data: matched });
   }
-
-  const total = collections.length;
-  const start = (parseInt(pageNum) - 1) * parseInt(pageSize);
-  const end = start + parseInt(pageSize);
-  const rows = collections.slice(start, end);
-
-  return res.json({ code: 200, total, rows });
+  
+  return res.json({ success: false, message: `未找到"${keyword}"相关的单词` });
 });
 
 /**
  * POST /api/student-words/collect
- * 收藏/取消收藏单词
- * Body: { wordId, collect }
+ * 收藏单词
+ * @body {number} wordId - 单词ID
  */
 router.post('/collect', authMiddleware, async (req, res) => {
-  await delay(300);
-  const { wordId, collect } = req.body;
-
-  const word = Object.values(MOCK_WORDS_DATA).find(w => w.wordId === wordId);
-
-  if (!word) {
-    return res.status(404).json({ code: 404, message: '单词不存在' });
-  }
-
-  if (collect) {
-    // 收藏
-    word.isCollected = true;
-    // 如果收藏列表中没有，则添加
-    if (!mockCollections.find(c => c.wordId === wordId)) {
-      mockCollections.push({
-        collectionId: mockCollections.length + 1,
-        wordId: word.wordId,
-        englishWord: word.englishWord,
-        phoneticUk: word.phoneticUk,
-        phoneticUs: word.phoneticUs,
-        chineseMeaning: word.chineseMeaning,
-        exampleSentence: word.exampleSentence,
-        exampleTranslation: word.exampleTranslation
-      });
-    }
-  } else {
-    // 取消收藏
-    word.isCollected = false;
-    mockCollections = mockCollections.filter(c => c.wordId !== wordId);
-  }
-
-  return res.json({ code: 200, message: collect ? '收藏成功' : '取消收藏成功' });
-});
-
-/**
- * DELETE /api/student-words/collections
- * 批量删除收藏
- * Query: collectionIds (逗号分隔)
- */
-router.delete('/collections', authMiddleware, async (req, res) => {
-  await delay(300);
-  const { collectionIds } = req.query;
-
-  if (!collectionIds) {
-    return res.status(400).json({ code: 400, message: '缺少收藏ID' });
-  }
-
-  const ids = collectionIds.split(',').map(id => parseInt(id));
-
-  // 更新收藏列表
-  mockCollections = mockCollections.filter(c => !ids.includes(c.collectionId));
-
-  // 更新单词收藏状态
-  const removedCollections = ids.map(id => mockCollections.find(c => c.collectionId === id)).filter(Boolean);
-  removedCollections.forEach(c => {
-    const word = Object.values(MOCK_WORDS_DATA).find(w => w.wordId === c.wordId);
-    if (word) word.isCollected = false;
-  });
-
-  return res.json({ code: 200, message: '删除成功' });
-});
-
-/**
- * POST /api/student-words/match
- * 单词答案匹配验证
- * Body: { wordId, userAnswer, matchType }
- * matchType: 1=单词默写 2=单词拼写 3=英译中 4=中译英 5=填空题
- */
-router.post('/match', authMiddleware, async (req, res) => {
   await delay(200);
-  const { wordId, userAnswer, matchType } = req.body;
-
-  const word = Object.values(MOCK_WORDS_DATA).find(w => w.wordId === wordId);
-
+  const { wordId } = req.body;
+  const username = getUsername(req);
+  
+  // 确保该用户的收藏列表存在
+  if (!mockFavoriteWordsData[username]) {
+    mockFavoriteWordsData[username] = [];
+  }
+  
+  const favorites = mockFavoriteWordsData[username];
+  const word = Object.values(mockWordsData).find(w => w.wordId === wordId);
+  
   if (!word) {
-    return res.status(404).json({ code: 404, message: '单词不存在' });
+    return res.json({ code: 400, msg: '单词不存在' });
   }
-
-  let correct = false;
-  let correctAnswer = '';
-
-  switch (parseInt(matchType)) {
-    case 1: // 单词默写
-    case 2: // 单词拼写
-      correct = userAnswer.toLowerCase().trim() === word.englishWord.toLowerCase();
-      correctAnswer = word.englishWord;
-      break;
-    case 3: // 英译中
-      correct = userAnswer.trim().includes(word.chineseMeaning.split(' ')[0]);
-      correctAnswer = word.chineseMeaning;
-      break;
-    case 4: // 中译英
-      correct = userAnswer.toLowerCase().trim() === word.englishWord.toLowerCase();
-      correctAnswer = word.englishWord;
-      break;
-    case 5: // 填空题
-      correct = userAnswer.toLowerCase().trim() === word.englishWord.toLowerCase();
-      correctAnswer = word.englishWord;
-      break;
-    default:
-      return res.status(400).json({ code: 400, message: '无效的匹配类型' });
+  
+  // 检查是否已收藏
+  if (favorites.find(f => f.wordId === wordId)) {
+    return res.json({ code: 400, msg: '该单词已收藏' });
   }
+  
+  // 添加收藏
+  favorites.push({
+    ...word,
+    collectionId: Date.now()
+  });
+  
+  return res.json({ code: 200, msg: '收藏成功' });
+});
 
+/**
+ * POST /api/student-words/uncollect
+ * 取消收藏
+ * @body {number} wordId - 单词ID
+ */
+router.post('/uncollect', authMiddleware, async (req, res) => {
+  await delay(200);
+  const { wordId } = req.body;
+  const username = getUsername(req);
+  
+  const favorites = mockFavoriteWordsData[username] || mockFavoriteWordsData.student;
+  
+  // 取消收藏
+  const index = favorites.findIndex(f => f.wordId === wordId);
+  if (index === -1) {
+    return res.json({ code: 400, msg: '该单词未收藏' });
+  }
+  
+  favorites.splice(index, 1);
+  
+  return res.json({ code: 200, msg: '取消收藏成功' });
+});
+
+/**
+ * GET /api/student-words/favorites
+ * 获取收藏单词列表（带搜索功能）
+ * @query {string} keyword - 搜索关键词（可选）
+ */
+router.get('/favorites', authMiddleware, async (req, res) => {
+  await delay(300);
+  const { keyword } = req.query;
+  const username = getUsername(req);
+  
+  let favorites = mockFavoriteWordsData[username] || mockFavoriteWordsData.student;
+  
+  // 搜索功能
+  if (keyword) {
+    const lowerKeyword = keyword.toLowerCase().trim();
+    
+    if (/[\u4e00-\u9fa5]/.test(keyword)) {
+      // 中文搜索
+      const englishWord = chineseToEnglishMap[keyword];
+      if (englishWord) {
+        favorites = favorites.filter(f => f.word === englishWord);
+      } else {
+        favorites = favorites.filter(f => 
+          f.meanings.some(m => m.includes(keyword))
+        );
+      }
+    } else {
+      // 英文搜索
+      favorites = favorites.filter(f => 
+        f.word.toLowerCase().includes(lowerKeyword) ||
+        f.meanings.some(m => m.toLowerCase().includes(lowerKeyword))
+      );
+    }
+  }
+  
+  return res.json({
+    code: 200,
+    total: favorites.length,
+    rows: favorites,
+    records: favorites
+  });
+});
+
+/**
+ * DELETE /api/student-words/favorites/:collectionId
+ * 删除收藏单词
+ * @param {number} collectionId - 收藏ID
+ */
+router.delete('/favorites/:collectionId', authMiddleware, async (req, res) => {
+  await delay(200);
+  const { collectionId } = req.params;
+  const username = getUsername(req);
+  
+  const favorites = mockFavoriteWordsData[username] || mockFavoriteWordsData.student;
+  
+  // 查找并删除
+  const index = favorites.findIndex(f => f.collectionId === parseInt(collectionId));
+  if (index === -1) {
+    return res.json({ code: 400, msg: '收藏不存在' });
+  }
+  
+  favorites.splice(index, 1);
+  
+  return res.json({ code: 200, msg: '删除成功' });
+});
+
+/**
+ * POST /api/student-words/spell-check
+ * 根据中文释义拼写单词（看中文写英文）
+ * @body {number} wordId - 单词ID
+ * @body {string} userAnswer - 用户答案
+ */
+router.post('/spell-check', authMiddleware, async (req, res) => {
+  await delay(200);
+  const { wordId, userAnswer } = req.body;
+  
+  const word = Object.values(mockWordsData).find(w => w.wordId === wordId);
+  if (!word) {
+    return res.json({ code: 400, msg: '未找到该单词' });
+  }
+  
+  const isCorrect = word.word.toLowerCase() === userAnswer.toLowerCase().trim();
+  
   return res.json({
     code: 200,
     data: {
-      correct,
-      correctAnswer: correctAnswer
+      isCorrect,
+      correctAnswer: word.word,
+      wordId: word.wordId,
+      word: word.word
     }
   });
 });
 
 /**
- * GET /api/student-words/task/:taskId
- * 获取任务的单词列表
+ * POST /api/student-words/fill-blank
+ * 填写缺失的字母（填空题）
+ * @body {number} wordId - 单词ID
+ * @body {string} userAnswer - 用户答案
  */
-router.get('/task/:taskId', authMiddleware, async (req, res) => {
-  await delay(300);
-  const { taskId } = req.params;
+router.post('/fill-blank', authMiddleware, async (req, res) => {
+  await delay(200);
+  const { wordId, userAnswer } = req.body;
+  
+  const word = Object.values(mockWordsData).find(w => w.wordId === wordId);
+  if (!word) {
+    return res.json({ code: 400, msg: '未找到该单词' });
+  }
+  
+  const isCorrect = word.word.toLowerCase() === userAnswer.toLowerCase().trim();
+  
+  return res.json({
+    code: 200,
+    data: {
+      isCorrect,
+      correctAnswer: word.word,
+      wordId: word.wordId,
+      word: word.word
+    }
+  });
+});
 
-  // 返回部分单词作为任务单词
-  const taskWords = [MOCK_WORDS_DATA.hello, MOCK_WORDS_DATA.study, MOCK_WORDS_DATA.learn];
-
-  return res.json({ code: 200, data: taskWords });
+/**
+ * GET /api/student-words/:wordId
+ * 获取单词详情
+ * @param {number} wordId - 单词ID
+ */
+router.get('/:wordId', authMiddleware, async (req, res) => {
+  await delay(200);
+  const { wordId } = req.params;
+  
+  const word = Object.values(mockWordsData).find(w => w.wordId === parseInt(wordId));
+  if (!word) {
+    return res.json({ code: 400, msg: '未找到该单词' });
+  }
+  
+  return res.json({ code: 200, data: word });
 });
 
 module.exports = router;

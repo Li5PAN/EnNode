@@ -8,6 +8,9 @@ const coursesRouter     = require('./routes/courses');
 const usersRouter       = require('./routes/users');
 const studentHomeRouter = require('./routes/studentHome');
 const studentWordsRouter = require('./routes/studentWords');
+const teacherHomeRouter  = require('./routes/teacherHome');
+const teacherClassRouter = require('./routes/teacherClass');
+const adminHomeRouter    = require('./routes/adminHome');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -30,6 +33,9 @@ app.use('/api/courses',    coursesRouter);
 app.use('/api/users',      usersRouter);
 app.use('/api/student-home', studentHomeRouter);
 app.use('/api/student-words', studentWordsRouter);
+app.use('/api/teacher-home',  teacherHomeRouter);
+app.use('/api/teacher-class', teacherClassRouter);
+app.use('/api/admin-home',    adminHomeRouter);
 
 // ─── 根路径：接口文档概览 ──────────────────────────────────
 app.get('/', (req, res) => {
@@ -59,14 +65,41 @@ app.get('/', (req, res) => {
         'GET /api/student-home/class-progress':  '获取班级任务完成进度'
       },
       studentWords: {
-        'GET    /api/student-words':            '获取单词列表（分页）',
-        'GET    /api/student-words/all':        '获取所有单词',
-        'GET    /api/student-words/search':     '搜索单词',
-        'GET    /api/student-words/collections': '获取收藏列表',
-        'POST   /api/student-words/collect':    '收藏/取消收藏',
-        'DELETE /api/student-words/collections': '删除收藏',
-        'POST   /api/student-words/match':      '单词答案匹配',
-        'GET    /api/student-words/task/:id':   '获取任务单词'
+        'GET    /api/student-words':              '获取单词列表（分页+搜索）',
+        'GET    /api/student-words/search':       '搜索单词（支持中英文）',
+        'GET    /api/student-words/favorites':    '获取收藏列表（带搜索）',
+        'POST   /api/student-words/collect':      '收藏单词',
+        'POST   /api/student-words/uncollect':    '取消收藏',
+        'DELETE /api/student-words/favorites/:collectionId': '删除收藏',
+        'POST   /api/student-words/spell-check':  '看中文写英文核对',
+        'POST   /api/student-words/fill-blank':   '填空题核对',
+        'GET    /api/student-words/:wordId':      '获取单词详情'
+      },
+      teacherHome: {
+        'GET /api/teacher-home/dashboard':              '获取教师仪表盘数据（顶部概览）',
+        'GET /api/teacher-home/level-distribution':     '获取班级等级分布',
+        'GET /api/teacher-home/task-completion':        '获取各班级任务完成率对比',
+        'GET /api/teacher-home/activity-trend':         '获取学生活跃度趋势（最近7天）',
+        'GET /api/teacher-home/error-type-distribution': '获取错题类型分布'
+      },
+      teacherClass: {
+        'GET    /api/teacher-class/overview':        '获取班级概览数据',
+        'GET    /api/teacher-class/list':            '获取班级列表（当前老师）',
+        'GET    /api/teacher-class/all':             '获取所有班级列表',
+        'POST   /api/teacher-class/create':          '创建班级（需审核）',
+        'GET    /api/teacher-class/pending':         '获取待审核班级列表',
+        'POST   /api/teacher-class/approve/:classId': '审核通过班级',
+        'POST   /api/teacher-class/reject/:classId': '拒绝班级',
+        'DELETE /api/teacher-class/delete/:classId': '删除班级',
+        'POST   /api/teacher-class/publish-task':    '发布任务'
+      },
+      adminHome: {
+        'GET /api/admin-home/overview':            '获取数据概览',
+        'GET /api/admin-home/level-distribution':  '获取各等级班级分布',
+        'GET /api/admin-home/user-growth-trend':   '获取用户增长趋势',
+        'GET /api/admin-home/class-change-trend':  '获取换班变化趋势',
+        'GET /api/admin-home/drop-class-trend':    '获取退班变化趋势',
+        'GET /api/admin-home/class-create-trend':  '获取班级创建趋势'
       },
       courses: {
         'GET    /api/courses':     '获取课程列表（支持 keyword/page/pageSize）',

@@ -217,11 +217,24 @@ router.post('/clock-in', authMiddleware, async (req, res) => {
     currentData.clockInDates = generateClockInDates();
   }
 
+  // 计算昨天的日期
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+
   // 更新打卡记录
   if (!currentData.clockInDates.includes(today)) {
     currentData.clockInDates.push(today);
     currentData.totalDays = (currentData.totalDays || 16) + 1;
-    currentData.consecutiveDays = (currentData.consecutiveDays || 5) + 1;
+
+    // 计算连续打卡天数：检查昨天是否打卡
+    if (currentData.clockInDates.includes(yesterdayStr)) {
+      // 昨天已打卡，连续天数+1
+      currentData.consecutiveDays = (currentData.consecutiveDays || 5) + 1;
+    } else {
+      // 昨天未打卡（漏打了），连续天数重置为1
+      currentData.consecutiveDays = 1;
+    }
   }
 
   currentData.clockedIn = true;
