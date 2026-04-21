@@ -307,8 +307,22 @@ router.get('/task/:taskId', authMiddleware, async (req, res) => {
       };
 
       if (q.question_type === '1') {
-        question.options = q.options ? JSON.parse(q.options) : [];
-        question.correctIndexes = q.correct_answer ? JSON.parse(q.correct_answer) : [];
+        // 选择题：解析选项对象 {"A":"选项内容","B":"选项内容"}
+        try {
+          question.options = q.options ? JSON.parse(q.options) : {};
+        } catch (e) {
+          question.options = {};
+        }
+        // 解析正确答案数组 ["A","B"]
+        try {
+          const correctArr = q.correct_answer ? JSON.parse(q.correct_answer) : [];
+          question.correctIndexes = correctArr;
+          // 同时返回正确答案内容
+          question.correctAnswer = correctArr.map(idx => question.options[idx] || idx).join(',');
+        } catch (e) {
+          question.correctIndexes = [];
+          question.correctAnswer = '';
+        }
       } else {
         question.answer = q.correct_answer;
       }

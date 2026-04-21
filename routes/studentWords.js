@@ -336,6 +336,8 @@ router.post('/spell-check', authMiddleware, async (req, res) => {
 
     const word = rows[0];
     const isCorrect = word.english_word.toLowerCase() === userAnswer.toLowerCase().trim();
+    const correctIncrement = isCorrect ? 1 : 0;
+    const wrongIncrement = isCorrect ? 0 : 1;
 
     // 更新用户单词学习记录
     await pool.query(
@@ -346,7 +348,7 @@ router.post('/spell-check', authMiddleware, async (req, res) => {
          correct_count = correct_count + ?,
          wrong_count = wrong_count + ?,
          last_study_time = NOW()`,
-      [userId, wordId, isCorrect ? 1 : 0, isCorrect ? 1 : 0, isCorrect ? 0 : 1]
+      [userId, wordId, correctIncrement, wrongIncrement, correctIncrement, wrongIncrement]
     );
 
     return res.json({
@@ -386,6 +388,8 @@ router.post('/fill-blank', authMiddleware, async (req, res) => {
 
     const word = rows[0];
     const isCorrect = word.english_word.toLowerCase() === userAnswer.toLowerCase().trim();
+    const correctIncrement = isCorrect ? 1 : 0;
+    const wrongIncrement = isCorrect ? 0 : 1;
 
     // 更新用户单词学习记录
     await pool.query(
@@ -396,7 +400,7 @@ router.post('/fill-blank', authMiddleware, async (req, res) => {
          correct_count = correct_count + ?,
          wrong_count = wrong_count + ?,
          last_study_time = NOW()`,
-      [userId, wordId, isCorrect ? 1 : 0, isCorrect ? 1 : 0, isCorrect ? 0 : 1]
+      [userId, wordId, correctIncrement, wrongIncrement, correctIncrement, wrongIncrement]
     );
 
     return res.json({

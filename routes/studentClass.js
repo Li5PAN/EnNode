@@ -267,7 +267,7 @@ router.get('/ranking', authMiddleware, async (req, res) => {
 
     // 获取班级排行榜
     const [rankRows] = await pool.query(
-      `SELECT cm.user_id, u.nick_name as name, cm.class_rank as rank,
+      `SELECT cm.user_id, u.nick_name as name, cm.class_rank as \`rank\`,
               cm.completed_tasks, cm.total_study_time
        FROM elia_class_member cm
        JOIN sys_user u ON cm.user_id = u.user_id
@@ -391,9 +391,9 @@ router.post('/apply', authMiddleware, async (req, res) => {
       return res.json({ code: 400, msg: '您已在班级中，请先退出当前班级' });
     }
 
-    // 检查是否有待审核的申请
+    // 检查是否有待审核的入班申请
     const [applicationRows] = await pool.query(
-      'SELECT * FROM elia_class_application WHERE applicant_id = ? AND application_status = "0"',
+      'SELECT * FROM elia_class_application WHERE applicant_id = ? AND application_type = "1" AND application_status = "0"',
       [userId]
     );
 
@@ -430,28 +430,30 @@ router.post('/apply', authMiddleware, async (req, res) => {
       }
     }
 
-    // 创建入班申请（直接通过）
-    await pool.query(
-      `INSERT INTO elia_class_member (class_id, user_id, join_time, member_status, completed_tasks, total_study_time, create_time)
-       VALUES (?, ?, NOW(), '1', 0, 0, NOW())`,
+    // 检查是否已经是班级成员（任何状态）
+    const [existingMember] = await pool.query(
+      'SELECT * FROM elia_class_member WHERE class_id = ? AND user_id = ?',
       [classId, userId]
     );
 
-    // 更新班级人数
-    await pool.query(
-      'UPDATE elia_class SET current_students = current_students + 1 WHERE class_id = ?',
-      [classId]
-    );
+    if (existingMember.length > 0) {
+      // 如果是活跃成员，返回错误
+      if (existingMember[0].member_status === '1') {
+        return res.json({ code: 400, msg: '您已经是该班级成员' });
+      }
+      // 如果是已离开的成员，需要重新申请
+    }
 
-    // 更新用户当前班级
+    // 创建入班申请（等待老师审核）
     await pool.query(
-      'UPDATE sys_user SET current_class_id = ?, join_class_time = NOW() WHERE user_id = ?',
+      `INSERT INTO elia_class_application (class_id, applicant_id, application_type, application_status, create_time)
+       VALUES (?, ?, '1', '0', NOW())`,
       [classId, userId]
     );
 
     return res.json({
       code: 200,
-      msg: '成功加入班级',
+      msg: '入班申请已提交，请等待老师审核',
       data: {
         classId: classData.class_id,
         className: classData.class_name
@@ -629,9 +631,9 @@ router.get('/check-apply', authMiddleware, async (req, res) => {
       });
     }
 
-    // 检查是否有待审核的申请
+    // 检查是否有待审核的入班申请
     const [applicationRows] = await pool.query(
-      'SELECT * FROM elia_class_application WHERE applicant_id = ? AND application_status = "0"',
+      'SELECT * FROM elia_class_application WHERE applicant_id = ? AND application_type = "1" AND application_status = "0"',
       [userId]
     );
 

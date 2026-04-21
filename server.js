@@ -16,6 +16,7 @@ const teacherClassDataRouter = require('./routes/teacherClassData');
 const studentClassRouter = require('./routes/studentClass');
 const studentErrorsRouter = require('./routes/studentErrors');
 const studentClassDataRouter = require('./routes/studentClassData');
+const studentTasksRouter = require('./routes/studentTasks');
 const adminHomeRouter    = require('./routes/adminHome');
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api/teacher-class-data', teacherClassDataRouter);
 app.use('/api/student-class', studentClassRouter);
 app.use('/api/student-errors', studentErrorsRouter);
 app.use('/api/student-class-data', studentClassDataRouter);
+app.use('/api/student-tasks', studentTasksRouter);
 app.use('/api/admin-home',    adminHomeRouter);
 
 // ─── 根路径：接口文档概览 ──────────────────────────────────
@@ -149,6 +151,12 @@ app.get('/', (req, res) => {
         'GET /api/student-class-data/daily-study':  '获取每日学习数据（近7天）',
         'GET /api/student-class-data/compare':      '获取班级vs个人完成率走势（近8周）',
         'GET /api/student-class-data/ranking':      '获取班级排名（支持按学习时长/单词量排序）'
+      },
+      studentTasks: {
+        'GET /api/student-tasks/list':              '获取任务列表（未完成/已完成）',
+        'GET /api/student-tasks/:taskId':           '获取任务详情（包含题目，用于做题）',
+        'POST /api/student-tasks/:taskId/submit':   '提交任务答案',
+        'GET /api/student-tasks/:taskId/detail':    '获取任务结果详情（查看已完成任务）'
       },
       adminHome: {
         'GET /api/admin-home/overview':            '获取数据概览',
