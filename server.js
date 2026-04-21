@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 
+const { testConnection } = require('./db/pool');
+
 const authRouter        = require('./routes/auth');
 const studentsRouter    = require('./routes/students');
 const coursesRouter     = require('./routes/courses');
@@ -195,7 +197,10 @@ app.use((err, req, res, next) => {
 });
 
 // ─── 启动服务 ─────────────────────────────────────────────
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`✅ 服务已启动：http://localhost:${PORT}`);
   console.log(`📄 接口文档：  http://localhost:${PORT}/`);
+  
+  // 测试数据库连接
+  await testConnection();
 });

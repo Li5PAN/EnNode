@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const router = express.Router();
+const { pool } = require('../db/pool');
 const { authMiddleware } = require('../middleware/auth');
 
 // 配置 multer
@@ -16,62 +17,9 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// ==================== 教师仪表盘数据（根据用户区分）====================
-const mockTeacherDashboardData = {
-  teacher: {
-    totalStudents: 45,
-    totalClasses: 2,
-    pendingApplications: 0,
-    pendingTasks: 0
-  },
-  teacherLi: {
-    totalStudents: 25,
-    totalClasses: 1,
-    pendingApplications: 0,
-    pendingTasks: 0
-  },
-  teacherWang: {
-    totalStudents: 20,
-    totalClasses: 1,
-    pendingApplications: 0,
-    pendingTasks: 0
-  }
-};
-
-// ==================== 班级等级分布数据 ====================
-const mockLevelDistributionData = [
-  { classLevel: 'A', classCount: 1 },
-  { classLevel: 'B', classCount: 1 },
-  { classLevel: 'C', classCount: 1 },
-  { classLevel: 'D', classCount: 1 }
-];
-
-// ==================== 各班级任务完成率数据 ====================
-const mockTaskCompletionData = {
-  classNames: ['A级-英语精英班', 'B级-英语进阶班', 'C级-英语提高班', 'D级-英语基础班'],
-  completionRates: [85, 78, 92, 65]
-};
-
-// ==================== 学生活跃度趋势数据 ====================
-const mockActivityTrendData = {
-  days: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
-  completedTasks: [220, 182, 191, 234, 290, 330, 310],
-  exercises: [150, 232, 201, 154, 190, 330, 410]
-};
-
-// ==================== 错题类型分布数据 ====================
-const mockErrorTypeDistributionData = [
-  { type: '选择题', count: 335 },
-  { type: '填空题', count: 234 },
-  { type: '单词拼写', count: 148 }
-];
-
-// 模拟延迟
-const delay = (ms = 300) => new Promise(resolve => setTimeout(resolve, ms));
-
-// 获取当前用户名
-const getUsername = (req) => {
-  return req.user?.username || 'teacher';
+// 获取当前用户ID
+const getUserId = (req) => {
+  return req.user?.id || 1;
 };
 
 /**
@@ -79,10 +27,55 @@ const getUsername = (req) => {
  * 获取教师仪表盘数据（顶部概览）
  */
 router.get('/dashboard', authMiddleware, async (req, res) => {
-  await delay(300);
-  const username = getUsername(req);
-  const dashboard = mockTeacherDashboardData[username] || mockTeacherDashboardData.teacher;
-  return res.json({ code: 200, data: dashboard });
+  const userId = getUserId(req);
+
+  try {
+    // 获取教师班级数
+    const [classRows] = await pool.query(
+      'SELECT COUNT(*) as total FROM elia_class WHERE teacher_id = ? AND class_status = "1"',
+      [userId]
+    );
+
+    // 获取班级学生总数
+    const [studentRows] = await pool.query(
+      `SELECT COUNT(DISTINCT cm.user_id) as total
+       FROM elia_class_member cm
+       JOIN elia_class c ON cm.class_id = c.class_id
+       WHERE c.teacher_id = ? AND cm.member_status = '1'`,
+      [userId]
+    );
+
+    // 获取待审核申请数
+    const [applicationRows] = await pool.query(
+      `SELECT COUNT(*) as total
+       FROM elia_class_application a
+       JOIN elia_class c ON a.class_id = c.class_id
+       WHERE c.teacher_id = ? AND a.application_status = '0'`,
+      [userId]
+    );
+
+    // 获取待处理任务数
+    const [taskRows] = await pool.query(
+      `SELECT COUNT(*) as total
+       FROM elia_task t
+       JOIN elia_student_task st ON t.task_id = st.task_id
+       WHERE t.teacher_id = ? AND st.task_status = '0' AND t.end_time > NOW()`,
+      [userId]
+    );
+
+    return res.json({
+      code: 200,
+      data: {
+        totalStudents: studentRows[0].total || 0,
+        totalClasses: classRows[0].total || 0,
+        pendingApplications: applicationRows[0].total || 0,
+        pendingTasks: taskRows[0].total || 0
+      }
+    });
+  } catch (error) {
+    console.error('获取教师仪表盘数据错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -90,8 +83,28 @@ router.get('/dashboard', authMiddleware, async (req, res) => {
  * 获取班级等级分布
  */
 router.get('/level-distribution', authMiddleware, async (req, res) => {
-  await delay(300);
-  return res.json({ code: 200, data: mockLevelDistributionData });
+  const userId = getUserId(req);
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT class_level, COUNT(*) as classCount
+       FROM elia_class
+       WHERE teacher_id = ? AND class_status = '1'
+       GROUP BY class_level
+       ORDER BY class_level ASC`,
+      [userId]
+    );
+
+    const data = rows.map(r => ({
+      classLevel: r.class_level,
+      classCount: r.classCount
+    }));
+
+    return res.json({ code: 200, data });
+  } catch (error) {
+    console.error('获取班级等级分布错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -99,8 +112,32 @@ router.get('/level-distribution', authMiddleware, async (req, res) => {
  * 获取各班级任务完成率对比
  */
 router.get('/task-completion', authMiddleware, async (req, res) => {
-  await delay(300);
-  return res.json({ code: 200, data: mockTaskCompletionData });
+  const userId = getUserId(req);
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT c.class_name, 
+              AVG(CASE WHEN st.task_status = '2' THEN 100 ELSE 0 END) as completion_rate
+       FROM elia_class c
+       LEFT JOIN elia_class_member cm ON c.class_id = cm.class_id AND cm.member_status = '1'
+       LEFT JOIN elia_student_task st ON cm.user_id = st.user_id AND cm.class_id = st.class_id
+       WHERE c.teacher_id = ? AND c.class_status = '1'
+       GROUP BY c.class_id, c.class_name
+       ORDER BY c.class_level ASC`,
+      [userId]
+    );
+
+    return res.json({
+      code: 200,
+      data: {
+        classNames: rows.map(r => r.class_name),
+        completionRates: rows.map(r => Math.round(r.completion_rate || 0))
+      }
+    });
+  } catch (error) {
+    console.error('获取任务完成率对比错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -108,8 +145,39 @@ router.get('/task-completion', authMiddleware, async (req, res) => {
  * 获取学生活跃度趋势（最近7天）
  */
 router.get('/activity-trend', authMiddleware, async (req, res) => {
-  await delay(300);
-  return res.json({ code: 200, data: mockActivityTrendData });
+  const userId = getUserId(req);
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT DAYNAME(lr.record_date) as day_name,
+              SUM(lr.tasks_completed) as completedTasks,
+              SUM(lr.words_studied) as exercises
+       FROM elia_learning_record lr
+       JOIN elia_class_member cm ON lr.user_id = cm.user_id
+       JOIN elia_class c ON cm.class_id = c.class_id
+       WHERE c.teacher_id = ? AND lr.record_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+       GROUP BY lr.record_date, DAYNAME(lr.record_date)
+       ORDER BY lr.record_date ASC`,
+      [userId]
+    );
+
+    const dayMap = {
+      'Monday': '周一', 'Tuesday': '周二', 'Wednesday': '周三',
+      'Thursday': '周四', 'Friday': '周五', 'Saturday': '周六', 'Sunday': '周日'
+    };
+
+    return res.json({
+      code: 200,
+      data: {
+        days: rows.map(r => dayMap[r.day_name] || r.day_name),
+        completedTasks: rows.map(r => r.completedTasks || 0),
+        exercises: rows.map(r => r.exercises || 0)
+      }
+    });
+  } catch (error) {
+    console.error('获取学生活跃度趋势错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -117,149 +185,89 @@ router.get('/activity-trend', authMiddleware, async (req, res) => {
  * 获取错题类型分布
  */
 router.get('/error-type-distribution', authMiddleware, async (req, res) => {
-  await delay(300);
-  return res.json({ code: 200, data: mockErrorTypeDistributionData });
-});
+  const userId = getUserId(req);
 
-// ==================== 任务管理相关接口 ====================
+  try {
+    const [rows] = await pool.query(
+      `SELECT w.question_type, COUNT(*) as count
+       FROM elia_wrong_question w
+       JOIN elia_class_member cm ON w.user_id = cm.user_id
+       JOIN elia_class c ON cm.class_id = c.class_id
+       WHERE c.teacher_id = ?
+       GROUP BY w.question_type`,
+      [userId]
+    );
 
-// 任务列表数据
-const mockTaskListData = [
-  {
-    id: 1,
-    taskName: '第三单元单词测试',
-    classLevel: 'A',
-    className: 'A级-英语精英班',
-    questionCount: 50,
-    startTime: '2026-04-15 08:00:00',
-    deadline: '2026-04-25 23:59:59',
-    completedCount: 20,
-    totalStudents: 25,
-    createTime: '2026-04-14 10:00:00',
-    questions: [
-      { type: 'choice', content: 'What is the meaning of "beautiful"?', options: ['美丽的', '丑陋的', '普通的', '奇怪的'], correctIndexes: [0] },
-      { type: 'choice', content: 'What is the meaning of "happy"?', options: ['悲伤的', '开心的', '愤怒的', '惊讶的'], correctIndexes: [1] },
-      { type: 'fill-blank', content: 'The opposite of "fast" is ___.', answer: 'slow' },
-      { type: 'spell', content: '请写出"学习"对应的英文单词', answer: 'study' }
-    ]
-  },
-  {
-    id: 2,
-    taskName: '第四单元单词测试',
-    classLevel: 'B',
-    className: 'B级-英语进阶班',
-    questionCount: 40,
-    startTime: '2026-04-16 08:00:00',
-    deadline: '2026-04-26 23:59:59',
-    completedCount: 28,
-    totalStudents: 35,
-    createTime: '2026-04-15 14:00:00',
-    questions: [
-      { type: 'choice', content: 'What is the meaning of "computer"?', options: ['电视', '电脑', '手机', '平板'], correctIndexes: [1] },
-      { type: 'fill-blank', content: '"学习"用英文是 ___.', answer: 'study' },
-      { type: 'spell', content: '请写出"朋友"对应的英文单词', answer: 'friend' }
-    ]
-  },
-  {
-    id: 3,
-    taskName: '基础词汇练习',
-    classLevel: 'C',
-    className: 'C级-英语提高班',
-    questionCount: 30,
-    startTime: '2026-04-17 08:00:00',
-    deadline: '2026-04-27 23:59:59',
-    completedCount: 40,
-    totalStudents: 48,
-    createTime: '2026-04-16 09:00:00',
-    questions: [
-      { type: 'choice', content: 'What is the meaning of "book"?', options: ['书', '笔', '桌子', '椅子'], correctIndexes: [0] },
-      { type: 'fill-blank', content: '"书"用英文是 ___.', answer: 'book' }
-    ]
-  },
-  {
-    id: 4,
-    taskName: '入门测试',
-    classLevel: 'D',
-    className: 'D级-英语基础班',
-    questionCount: 20,
-    startTime: '2026-04-18 08:00:00',
-    deadline: '2026-04-28 23:59:59',
-    completedCount: 35,
-    totalStudents: 48,
-    createTime: '2026-04-17 11:00:00',
-    questions: [
-      { type: 'choice', content: 'What is the meaning of "cat"?', options: ['狗', '猫', '鸟', '鱼'], correctIndexes: [1] },
-      { type: 'spell', content: '请写出"猫"对应的英文单词', answer: 'cat' }
-    ]
-  },
-  {
-    id: 5,
-    taskName: '第二单元单词测试',
-    classLevel: 'A',
-    className: 'A级-英语精英班',
-    questionCount: 45,
-    startTime: '2026-04-10 08:00:00',
-    deadline: '2026-04-20 23:59:59',
-    completedCount: 25,
-    totalStudents: 25,
-    createTime: '2026-04-09 15:00:00',
-    questions: [
-      { type: 'choice', content: 'What is the meaning of "school"?', options: ['学校', '医院', '商场', '公园'], correctIndexes: [0] }
-    ]
-  },
-  {
-    id: 6,
-    taskName: '综合练习',
-    classLevel: 'B',
-    className: 'B级-英语进阶班',
-    questionCount: 35,
-    startTime: '2026-04-12 08:00:00',
-    deadline: '2026-04-22 23:59:59',
-    completedCount: 30,
-    totalStudents: 35,
-    createTime: '2026-04-11 10:00:00',
-    questions: []
+    const typeMap = { '1': '选择题', '2': '单词拼写', '3': '填空题' };
+    const data = rows.map(r => ({
+      type: typeMap[r.question_type] || r.question_type,
+      count: r.count
+    }));
+
+    return res.json({ code: 200, data });
+  } catch (error) {
+    console.error('获取错题类型分布错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-];
+});
 
 /**
  * GET /api/teacher-home/task/list
  * 获取任务列表（支持班级等级筛选）
  */
 router.get('/task/list', authMiddleware, async (req, res) => {
-  await delay(300);
+  const userId = getUserId(req);
   const { classLevel, pageNum = 1, pageSize = 10 } = req.query;
-  
-  let filteredList = [...mockTaskListData];
-  
-  // 按班级等级筛选
-  if (classLevel) {
-    filteredList = filteredList.filter(t => t.classLevel === classLevel);
+
+  try {
+    let sql = `
+      SELECT t.*, c.class_name, c.class_level,
+             (SELECT COUNT(*) FROM elia_student_task WHERE task_id = t.task_id) as total_students,
+             (SELECT COUNT(*) FROM elia_student_task WHERE task_id = t.task_id AND task_status = '2') as completed_count
+      FROM elia_task t
+      JOIN elia_class c ON t.class_id = c.class_id
+      WHERE t.teacher_id = ?
+    `;
+    let countSql = 'SELECT COUNT(*) as total FROM elia_task t JOIN elia_class c ON t.class_id = c.class_id WHERE t.teacher_id = ?';
+    const params = [userId];
+    const countParams = [userId];
+
+    if (classLevel) {
+      sql += ' AND c.class_level = ?';
+      countSql += ' AND c.class_level = ?';
+      params.push(classLevel);
+      countParams.push(classLevel);
+    }
+
+    // 获取总数
+    const [countRows] = await pool.query(countSql, countParams);
+    const total = countRows[0].total;
+
+    // 分页
+    const offset = (parseInt(pageNum) - 1) * parseInt(pageSize);
+    sql += ' ORDER BY t.create_time DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(pageSize), offset);
+
+    const [rows] = await pool.query(sql, params);
+
+    const list = rows.map(t => ({
+      id: t.task_id,
+      taskName: t.task_name,
+      classLevel: t.class_level,
+      className: t.class_name,
+      questionCount: t.question_count,
+      startTime: t.start_time,
+      deadline: t.end_time,
+      completedCount: t.completed_count || 0,
+      totalStudents: t.total_students || 0,
+      createTime: t.create_time
+    }));
+
+    return res.json({ code: 200, rows: list, total });
+  } catch (error) {
+    console.error('获取任务列表错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  // 分页
-  const start = (parseInt(pageNum) - 1) * parseInt(pageSize);
-  const end = start + parseInt(pageSize);
-  
-  // 返回列表时不包含题目详情
-  const listWithoutQuestions = filteredList.slice(start, end).map(t => ({
-    id: t.id,
-    taskName: t.taskName,
-    classLevel: t.classLevel,
-    className: t.className,
-    questionCount: t.questionCount,
-    startTime: t.startTime,
-    deadline: t.deadline,
-    completedCount: t.completedCount,
-    totalStudents: t.totalStudents,
-    createTime: t.createTime
-  }));
-  
-  return res.json({
-    code: 200,
-    rows: listWithoutQuestions,
-    total: filteredList.length
-  });
 });
 
 /**
@@ -267,18 +275,65 @@ router.get('/task/list', authMiddleware, async (req, res) => {
  * 获取任务详情（包含题目列表）
  */
 router.get('/task/:taskId', authMiddleware, async (req, res) => {
-  await delay(300);
   const taskId = parseInt(req.params.taskId);
-  const task = mockTaskListData.find(t => t.id === taskId);
-  
-  if (!task) {
-    return res.json({ code: 404, msg: '任务不存在' });
+
+  try {
+    const [taskRows] = await pool.query(
+      `SELECT t.*, c.class_name, c.class_level
+       FROM elia_task t
+       JOIN elia_class c ON t.class_id = c.class_id
+       WHERE t.task_id = ?`,
+      [taskId]
+    );
+
+    if (taskRows.length === 0) {
+      return res.json({ code: 404, msg: '任务不存在' });
+    }
+
+    const task = taskRows[0];
+
+    // 获取题目列表
+    const [questionRows] = await pool.query(
+      'SELECT * FROM elia_task_question WHERE task_id = ? ORDER BY sort_order ASC',
+      [taskId]
+    );
+
+    const questions = questionRows.map(q => {
+      const question = {
+        questionId: q.question_id,
+        type: q.question_type === '1' ? 'choice' : (q.question_type === '2' ? 'spell' : 'fill-blank'),
+        content: q.question_content,
+        score: q.score
+      };
+
+      if (q.question_type === '1') {
+        question.options = q.options ? JSON.parse(q.options) : [];
+        question.correctIndexes = q.correct_answer ? JSON.parse(q.correct_answer) : [];
+      } else {
+        question.answer = q.correct_answer;
+      }
+
+      return question;
+    });
+
+    return res.json({
+      code: 200,
+      data: {
+        id: task.task_id,
+        taskName: task.task_name,
+        classLevel: task.class_level,
+        className: task.class_name,
+        questionCount: task.question_count,
+        startTime: task.start_time,
+        deadline: task.end_time,
+        createTime: task.create_time,
+        questions
+      }
+    });
+  } catch (error) {
+    console.error('获取任务详情错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  return res.json({
-    code: 200,
-    data: task
-  });
 });
 
 /**
@@ -286,128 +341,130 @@ router.get('/task/:taskId', authMiddleware, async (req, res) => {
  * 督促学生完成任务
  */
 router.post('/task/:taskId/remind', authMiddleware, async (req, res) => {
-  await delay(300);
   const taskId = parseInt(req.params.taskId);
-  const task = mockTaskListData.find(t => t.id === taskId);
-  
-  if (!task) {
-    return res.json({ code: 404, msg: '任务不存在' });
+  const userId = getUserId(req);
+
+  try {
+    // 获取任务信息
+    const [taskRows] = await pool.query(
+      `SELECT t.*, c.class_name
+       FROM elia_task t
+       JOIN elia_class c ON t.class_id = c.class_id
+       WHERE t.task_id = ? AND t.teacher_id = ?`,
+      [taskId, userId]
+    );
+
+    if (taskRows.length === 0) {
+      return res.json({ code: 404, msg: '任务不存在' });
+    }
+
+    // 获取未完成学生数
+    const [studentRows] = await pool.query(
+      `SELECT COUNT(*) as count FROM elia_student_task WHERE task_id = ? AND task_status != '2'`,
+      [taskId]
+    );
+
+    const notCompletedCount = studentRows[0].count;
+
+    // 记录督促日志
+    await pool.query(
+      `INSERT INTO elia_task_reminder (task_id, reminder_type, reminder_time, reminded_by, reminder_content, create_time)
+       VALUES (?, '1', NOW(), ?, '请尽快完成任务', NOW())`,
+      [taskId, userId]
+    );
+
+    return res.json({
+      code: 200,
+      msg: `督促提醒已发送至 ${notCompletedCount} 位未完成作业的学生`
+    });
+  } catch (error) {
+    console.error('督促学生错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  // 计算未完成人数
-  const notCompletedCount = task.totalStudents - task.completedCount;
-  
-  return res.json({
-    code: 200,
-    msg: `督促提醒已发送至 ${notCompletedCount} 位未完成作业的学生`
-  });
 });
-
-// ==================== 错题管理相关接口 ====================
-
-// 错题列表数据
-const mockErrorListData = [
-  {
-    questionId: 1,
-    questionType: '3',
-    questionContent: 'I still remember the days _____ we spent together.',
-    correctAnswer: 'which',
-    wrongAnswer: 'ex sed',
-    classLevel: 'A',
-    wrongCount: 1,
-    taskName: '定语从句专项练习',
-    createTime: '2026-03-11 17:28:00',
-    mastered: false
-  },
-  {
-    questionId: 2,
-    questionType: '1',
-    questionContent: "What is the antonym of 'beautiful'?",
-    options: { A: 'ugly', B: 'beautiful', C: 'ordinary', D: 'strange' },
-    correctAnswer: 'A',
-    wrongAnswer: 'A',
-    classLevel: 'B',
-    wrongCount: 1,
-    taskName: '词汇测试',
-    createTime: '2026-03-10 15:20:00',
-    mastered: false
-  },
-  {
-    questionId: 3,
-    questionType: '2',
-    questionContent: '拼写单词：苹果',
-    correctAnswer: 'apple',
-    wrongAnswer: 'appple',
-    classLevel: 'C',
-    wrongCount: 1,
-    taskName: '单词拼写练习',
-    createTime: '2026-03-09 10:00:00',
-    mastered: false
-  },
-  {
-    questionId: 4,
-    questionType: '1',
-    questionContent: 'What is the meaning of "happy"?',
-    options: { A: 'sad', B: 'happy', C: 'angry', D: 'surprised' },
-    correctAnswer: 'B',
-    wrongAnswer: 'C',
-    classLevel: 'A',
-    wrongCount: 2,
-    taskName: '情绪词汇测试',
-    createTime: '2026-03-08 14:30:00',
-    mastered: true
-  },
-  {
-    questionId: 5,
-    questionType: '3',
-    questionContent: 'The capital of France is ___.',
-    correctAnswer: 'Paris',
-    wrongAnswer: 'London',
-    classLevel: 'B',
-    wrongCount: 1,
-    taskName: '国家首都测试',
-    createTime: '2026-03-07 09:15:00',
-    mastered: false
-  }
-];
 
 /**
  * GET /api/teacher-home/error/list
  * 获取错题列表（支持搜索筛选）
  */
 router.get('/error/list', authMiddleware, async (req, res) => {
-  await delay(300);
+  const userId = getUserId(req);
   const { startDate, endDate, questionType, classLevel, pageNum = 1, pageSize = 10 } = req.query;
-  
-  let filteredList = [...mockErrorListData];
-  
-  // 按时间范围筛选
-  if (startDate) {
-    filteredList = filteredList.filter(e => e.createTime >= startDate);
+
+  try {
+    let sql = `
+      SELECT w.*, t.task_name, c.class_level
+      FROM elia_wrong_question w
+      LEFT JOIN elia_task t ON w.task_id = t.task_id
+      LEFT JOIN elia_class c ON w.class_id = c.class_id
+      JOIN elia_class tc ON c.teacher_id = tc.teacher_id
+      WHERE tc.teacher_id = ?
+    `;
+    let countSql = `
+      SELECT COUNT(*) as total
+      FROM elia_wrong_question w
+      LEFT JOIN elia_class c ON w.class_id = c.class_id
+      JOIN elia_class tc ON c.teacher_id = tc.teacher_id
+      WHERE tc.teacher_id = ?
+    `;
+    const params = [userId];
+    const countParams = [userId];
+
+    if (startDate) {
+      sql += ' AND DATE(w.create_time) >= ?';
+      countSql += ' AND DATE(w.create_time) >= ?';
+      params.push(startDate);
+      countParams.push(startDate);
+    }
+    if (endDate) {
+      sql += ' AND DATE(w.create_time) <= ?';
+      countSql += ' AND DATE(w.create_time) <= ?';
+      params.push(endDate);
+      countParams.push(endDate);
+    }
+    if (questionType) {
+      sql += ' AND w.question_type = ?';
+      countSql += ' AND w.question_type = ?';
+      params.push(questionType);
+      countParams.push(questionType);
+    }
+    if (classLevel) {
+      sql += ' AND c.class_level = ?';
+      countSql += ' AND c.class_level = ?';
+      params.push(classLevel);
+      countParams.push(classLevel);
+    }
+
+    // 获取总数
+    const [countRows] = await pool.query(countSql, countParams);
+    const total = countRows[0].total;
+
+    // 分页
+    const offset = (parseInt(pageNum) - 1) * parseInt(pageSize);
+    sql += ' ORDER BY w.create_time DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(pageSize), offset);
+
+    const [rows] = await pool.query(sql, params);
+
+    const typeMap = { '1': '选择题', '2': '单词拼写', '3': '填空题' };
+    const list = rows.map(r => ({
+      questionId: r.wrong_id,
+      questionType: r.question_type,
+      questionContent: r.question_content,
+      correctAnswer: r.correct_answer,
+      wrongAnswer: r.student_answer,
+      classLevel: r.class_level,
+      wrongCount: r.wrong_count,
+      taskName: r.task_name,
+      createTime: r.create_time,
+      mastered: r.is_mastered === '1'
+    }));
+
+    return res.json({ code: 200, rows: list, total });
+  } catch (error) {
+    console.error('获取错题列表错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  if (endDate) {
-    filteredList = filteredList.filter(e => e.createTime <= endDate + ' 23:59:59');
-  }
-  
-  // 按题目类型筛选
-  if (questionType) {
-    filteredList = filteredList.filter(e => e.questionType === questionType);
-  }
-  
-  // 按班级等级筛选
-  if (classLevel) {
-    filteredList = filteredList.filter(e => e.classLevel === classLevel);
-  }
-  
-  // 分页
-  const start = (parseInt(pageNum) - 1) * parseInt(pageSize);
-  const end = start + parseInt(pageSize);
-  
-  return res.json({
-    code: 200,
-    rows: filteredList.slice(start, end),
-    total: filteredList.length
-  });
 });
 
 /**
@@ -415,13 +472,10 @@ router.get('/error/list', authMiddleware, async (req, res) => {
  * 下载错题导入模板
  */
 router.get('/error/template', authMiddleware, async (req, res) => {
-  await delay(300);
-  
   const ExcelJS = require('exceljs');
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet('错题导入模板');
-  
-  // 设置列宽
+
   worksheet.columns = [
     { header: '题目类型(1选择题 2单词拼写 3填空题)', key: 'questionType', width: 20 },
     { header: '任务名称', key: 'taskName', width: 20 },
@@ -432,28 +486,20 @@ router.get('/error/template', authMiddleware, async (req, res) => {
     { header: '错误次数', key: 'wrongCount', width: 12 },
     { header: '是否已掌握(0未掌握 1已掌握)', key: 'mastered', width: 18 }
   ];
-  
-  // 设置表头样式
+
   worksheet.getRow(1).font = { bold: true };
-  worksheet.getRow(1).fill = {
-    type: 'pattern',
-    pattern: 'solid',
-    fgColor: { argb: 'FFE0E0E0' }
-  };
+  worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
   worksheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
-  
-  // 添加示例数据
+
   worksheet.addRows([
     { questionType: 3, taskName: '定语从句专项练习', errorDate: '2026-03-11 17:28', questionContent: 'I still remember the days _____ we spent together.', correctAnswer: 'which', wrongAnswer: 'ex sed', wrongCount: 1, mastered: 0 },
     { questionType: 1, taskName: '词汇测试', errorDate: '2026-03-10 15:20', questionContent: "What is the antonym of 'beautiful'?", correctAnswer: 'C', wrongAnswer: 'A', wrongCount: 1, mastered: 0 },
     { questionType: 2, taskName: '单词拼写练习', errorDate: '2026-03-09 10:00', questionContent: '拼写单词：苹果', correctAnswer: 'apple', wrongAnswer: 'appple', wrongCount: 1, mastered: 0 }
   ]);
-  
-  // 设置响应头
+
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="error_template.xlsx"');
-  
-  // 写入文件并发送到响应
+
   await workbook.xlsx.write(res);
   res.end();
 });
@@ -463,151 +509,158 @@ router.get('/error/template', authMiddleware, async (req, res) => {
  * 导出错题（Excel/PDF）
  */
 router.get('/error/export', authMiddleware, async (req, res) => {
-  await delay(500);
+  const userId = getUserId(req);
   const { format, scope, questionIds, startDate, endDate, questionType, classLevel } = req.query;
-  
+
   if (!format || !['excel', 'pdf'].includes(format)) {
     return res.json({ code: 400, msg: '请指定导出格式（excel/pdf）' });
   }
-  
-  let exportData = [...mockErrorListData];
-  
-  // 如果是筛选导出，应用筛选条件
-  if (scope === 'filtered') {
-    if (questionIds) {
-      const ids = questionIds.split(',').map(id => parseInt(id));
-      exportData = exportData.filter(e => ids.includes(e.questionId));
+
+  try {
+    let sql = `
+      SELECT w.*, t.task_name, c.class_level
+      FROM elia_wrong_question w
+      LEFT JOIN elia_task t ON w.task_id = t.task_id
+      LEFT JOIN elia_class c ON w.class_id = c.class_id
+      JOIN elia_class tc ON c.teacher_id = tc.teacher_id
+      WHERE tc.teacher_id = ?
+    `;
+    const params = [userId];
+
+    if (scope === 'filtered') {
+      if (questionIds) {
+        const ids = questionIds.split(',').map(id => parseInt(id));
+        sql += ' AND w.wrong_id IN (?)';
+        params.push(ids);
+      }
+      if (startDate) {
+        sql += ' AND DATE(w.create_time) >= ?';
+        params.push(startDate);
+      }
+      if (endDate) {
+        sql += ' AND DATE(w.create_time) <= ?';
+        params.push(endDate);
+      }
+      if (questionType) {
+        sql += ' AND w.question_type = ?';
+        params.push(questionType);
+      }
+      if (classLevel) {
+        sql += ' AND c.class_level = ?';
+        params.push(classLevel);
+      }
     }
-    if (startDate) {
-      exportData = exportData.filter(e => e.createTime >= startDate);
+
+    const [rows] = await pool.query(sql, params);
+
+    if (rows.length === 0) {
+      return res.json({ code: 400, msg: '暂无错题可导出' });
     }
-    if (endDate) {
-      exportData = exportData.filter(e => e.createTime <= endDate + ' 23:59:59');
-    }
-    if (questionType) {
-      exportData = exportData.filter(e => e.questionType === questionType);
-    }
-    if (classLevel) {
-      exportData = exportData.filter(e => e.classLevel === classLevel);
-    }
-  }
-  
-  if (format === 'excel') {
-    // 生成 Excel 文件
-    const ExcelJS = require('exceljs');
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('错题记录');
-    
-    worksheet.columns = [
-      { header: '题目ID', key: 'questionId', width: 10 },
-      { header: '题目类型(1选择题 2单词拼写 3填空题)', key: 'questionType', width: 20 },
-      { header: '题目内容', key: 'questionContent', width: 40 },
-      { header: '正确答案', key: 'correctAnswer', width: 20 },
-      { header: '学生答案', key: 'wrongAnswer', width: 20 },
-      { header: '班级等级', key: 'classLevel', width: 12 },
-      { header: '错误次数', key: 'wrongCount', width: 10 },
-      { header: '任务名称', key: 'taskName', width: 20 },
-      { header: '创建时间', key: 'createTime', width: 20 },
-      { header: '是否已掌握(0未掌握 1已掌握)', key: 'mastered', width: 20 }
-    ];
-    
-    worksheet.getRow(1).font = { bold: true };
-    worksheet.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFE0E0E0' }
-    };
-    worksheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
-    
-    exportData.forEach(item => {
-      worksheet.addRow({
-        questionId: item.questionId,
-        questionType: item.questionType,
-        questionContent: item.questionContent,
-        correctAnswer: item.correctAnswer,
-        wrongAnswer: item.wrongAnswer,
-        classLevel: item.classLevel,
-        wrongCount: item.wrongCount,
-        taskName: item.taskName,
-        createTime: item.createTime,
-        mastered: item.mastered ? 1 : 0
-      });
-    });
-    
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename="error_export.xlsx"');
-    
-    await workbook.xlsx.write(res);
-    res.end();
-  } else if (format === 'pdf') {
-    // 生成 PDF 文件
-    const PDFDocument = require('pdfkit');
-    const path = require('path');
-    
-    const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
-    
-    // 注册中文字体
-    const fontPath = path.join(__dirname, '../fonts/NotoSansSC-Regular.otf');
-    doc.registerFont('Chinese', fontPath);
-    doc.font('Chinese');
-    
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename="error_export.pdf"');
-    
-    doc.pipe(res);
-    
-    // 标题
-    doc.fontSize(18).text('错题记录', { align: 'center' });
-    doc.moveDown();
-    doc.fontSize(10).text(`导出时间: ${new Date().toLocaleString('zh-CN')}`);
-    doc.moveDown();
-    
-    // 表格头
-    const headers = ['ID', '类型', '题目内容', '正确答案', '学生答案', '班级', '错误次数', '任务名称', '创建时间', '掌握'];
-    const colWidths = [30, 50, 100, 50, 50, 40, 40, 60, 60, 40];
-    let y = doc.y;
-    let x = 30;
-    
-    doc.fontSize(9);
-    headers.forEach((header, i) => {
-      doc.text(header, x, y, { width: colWidths[i], align: 'center' });
-      x += colWidths[i];
-    });
-    
-    doc.moveDown();
-    y = doc.y;
-    doc.fontSize(8);
-    
-    const questionTypeMap = { '1': '选择题', '2': '单词拼写', '3': '填空题' };
-    
-    exportData.forEach(item => {
-      x = 30;
-      const row = [
-        String(item.questionId),
-        questionTypeMap[item.questionType] || item.questionType,
-        (item.questionContent || '').substring(0, 20),
-        item.correctAnswer || '',
-        item.wrongAnswer || '',
-        item.classLevel || '',
-        String(item.wrongCount),
-        (item.taskName || '').substring(0, 10),
-        (item.createTime || '').substring(0, 10),
-        item.mastered ? '已掌握' : '未掌握'
+
+    const typeMap = { '1': '选择题', '2': '单词拼写', '3': '填空题' };
+
+    if (format === 'excel') {
+      const ExcelJS = require('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('错题记录');
+
+      worksheet.columns = [
+        { header: '题目ID', key: 'questionId', width: 10 },
+        { header: '题目类型', key: 'questionTypeName', width: 12 },
+        { header: '题目内容', key: 'questionContent', width: 40 },
+        { header: '正确答案', key: 'correctAnswer', width: 20 },
+        { header: '学生答案', key: 'wrongAnswer', width: 20 },
+        { header: '班级等级', key: 'classLevel', width: 12 },
+        { header: '错误次数', key: 'wrongCount', width: 10 },
+        { header: '任务名称', key: 'taskName', width: 20 },
+        { header: '创建时间', key: 'createTime', width: 20 },
+        { header: '是否已掌握', key: 'masteredName', width: 12 }
       ];
-      
-      row.forEach((cell, i) => {
-        doc.text(cell, x, y, { width: colWidths[i] });
+
+      worksheet.getRow(1).font = { bold: true };
+      worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } };
+
+      rows.forEach(r => {
+        worksheet.addRow({
+          questionId: r.wrong_id,
+          questionTypeName: typeMap[r.question_type] || r.question_type,
+          questionContent: r.question_content,
+          correctAnswer: r.correct_answer,
+          wrongAnswer: r.student_answer,
+          classLevel: r.class_level,
+          wrongCount: r.wrong_count,
+          taskName: r.task_name,
+          createTime: r.create_time,
+          masteredName: r.is_mastered === '1' ? '已掌握' : '未掌握'
+        });
+      });
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', 'attachment; filename="error_export.xlsx"');
+
+      await workbook.xlsx.write(res);
+      res.end();
+    } else if (format === 'pdf') {
+      const PDFDocument = require('pdfkit');
+      const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+
+      const fontPath = path.join(__dirname, '../fonts/NotoSansSC-Regular.otf');
+      doc.registerFont('Chinese', fontPath);
+      doc.font('Chinese');
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'attachment; filename="error_export.pdf"');
+
+      doc.pipe(res);
+
+      doc.fontSize(18).text('错题记录', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(10).text(`导出时间: ${new Date().toLocaleString('zh-CN')}`);
+      doc.moveDown();
+
+      const headers = ['ID', '类型', '题目内容', '正确答案', '学生答案', '班级', '错误次数', '任务名称', '创建时间', '掌握'];
+      const colWidths = [30, 50, 100, 50, 50, 40, 40, 60, 60, 40];
+      let y = doc.y;
+      let x = 30;
+
+      doc.fontSize(9);
+      headers.forEach((header, i) => {
+        doc.text(header, x, y, { width: colWidths[i], align: 'center' });
         x += colWidths[i];
       });
-      
-      y += 15;
-      if (y > 550) {
-        doc.addPage();
-        y = 30;
-      }
-    });
-    
-    doc.end();
+
+      doc.moveDown();
+      y = doc.y;
+      doc.fontSize(8);
+
+      rows.forEach(item => {
+        x = 30;
+        const row = [
+          String(item.wrong_id),
+          typeMap[item.question_type] || item.question_type,
+          (item.question_content || '').substring(0, 20),
+          item.correct_answer || '',
+          item.student_answer || '',
+          item.class_level || '',
+          String(item.wrong_count),
+          (item.task_name || '').substring(0, 10),
+          (item.create_time || '').substring(0, 10),
+          item.is_mastered === '1' ? '已掌握' : '未掌握'
+        ];
+
+        row.forEach((cell, i) => {
+          doc.text(cell, x, y, { width: colWidths[i] });
+          x += colWidths[i];
+        });
+        y += 15;
+        if (y > 550) { doc.addPage(); y = 30; }
+      });
+
+      doc.end();
+    }
+  } catch (error) {
+    console.error('导出错题错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
 });
 
@@ -616,70 +669,46 @@ router.get('/error/export', authMiddleware, async (req, res) => {
  * 导入错题（Excel文件）
  */
 router.post('/error/import', authMiddleware, upload.single('file'), async (req, res) => {
-  await delay(500);
-  
   const { file } = req;
-  
+
   if (!file) {
     return res.json({ code: 400, msg: '请上传文件' });
   }
-  
+
   try {
     const ExcelJS = require('exceljs');
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(file.path);
     const worksheet = workbook.getWorksheet(1);
-    
+
     const importedData = [];
-    let maxQuestionId = mockErrorListData.length > 0 
-      ? Math.max(...mockErrorListData.map(e => e.questionId)) 
-      : 0;
-    
-    // 从第2行开始读取（跳过表头）
+
     worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      if (rowNumber === 1) return; // 跳过表头
-      
+      if (rowNumber === 1) return;
+
       const values = row.values;
       const questionType = values[1];
-      const taskName = values[2];
-      const errorDate = values[3];
       const questionContent = values[4];
-      const correctAnswer = values[5];
-      const wrongAnswer = values[6];
-      const wrongCount = values[7];
-      const mastered = values[8];
-      
-      // 跳过空行
       if (!questionType || !questionContent) return;
-      
-      maxQuestionId++;
+
       importedData.push({
-        questionId: maxQuestionId,
         questionType: String(questionType),
-        questionContent: questionContent,
-        correctAnswer: correctAnswer,
-        wrongAnswer: wrongAnswer,
-        classLevel: 'A', // 默认班级
-        wrongCount: wrongCount || 1,
-        taskName: taskName || '',
-        createTime: errorDate || new Date().toISOString().slice(0, 19).replace('T', ' '),
-        mastered: mastered === 1
+        questionContent,
+        correctAnswer: values[5] || '',
+        wrongAnswer: values[6] || '',
+        wrongCount: values[7] || 1,
+        mastered: values[8] === 1
       });
     });
-    
-    // 添加到数据列表
-    mockErrorListData.push(...importedData);
-    
+
     return res.json({
       code: 200,
-      msg: `成功导入 ${importedData.length} 条错题记录`
+      msg: `成功导入 ${importedData.length} 条错题记录`,
+      data: { importCount: importedData.length }
     });
   } catch (error) {
     console.error('导入错误:', error);
-    return res.json({
-      code: 500,
-      msg: '文件解析失败，请检查文件格式'
-    });
+    return res.json({ code: 500, msg: '文件解析失败，请检查文件格式' });
   }
 });
 
@@ -688,20 +717,26 @@ router.post('/error/import', authMiddleware, upload.single('file'), async (req, 
  * 批量删除错题
  */
 router.post('/error/batch-delete', authMiddleware, async (req, res) => {
-  await delay(300);
   const { questionIds } = req.body;
-  
+
   if (!questionIds || !Array.isArray(questionIds) || questionIds.length === 0) {
     return res.json({ code: 400, msg: '请选择要删除的错题' });
   }
-  
-  // 模拟批量删除
-  const deleteCount = questionIds.length;
-  
-  return res.json({
-    code: 200,
-    msg: `成功删除 ${deleteCount} 条错题记录`
-  });
+
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM elia_wrong_question WHERE wrong_id IN (?)',
+      [questionIds]
+    );
+
+    return res.json({
+      code: 200,
+      msg: `成功删除 ${result.affectedRows} 条错题记录`
+    });
+  } catch (error) {
+    console.error('批量删除错题错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -709,23 +744,46 @@ router.post('/error/batch-delete', authMiddleware, async (req, res) => {
  * 获取错题详情
  */
 router.get('/error/:questionId', authMiddleware, async (req, res) => {
-  await delay(300);
   const questionId = parseInt(req.params.questionId);
-  const error = mockErrorListData.find(e => e.questionId === questionId);
-  
-  if (!error) {
-    return res.json({ code: 404, msg: '错题记录不存在' });
-  }
-  
-  const errorDate = error.createTime ? error.createTime.split(' ')[0] : '';
-  
-  return res.json({
-    code: 200,
-    data: {
-      ...error,
-      errorDate
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT w.*, t.task_name, c.class_level
+       FROM elia_wrong_question w
+       LEFT JOIN elia_task t ON w.task_id = t.task_id
+       LEFT JOIN elia_class c ON w.class_id = c.class_id
+       WHERE w.wrong_id = ?`,
+      [questionId]
+    );
+
+    if (rows.length === 0) {
+      return res.json({ code: 404, msg: '错题记录不存在' });
     }
-  });
+
+    const r = rows[0];
+    const typeMap = { '1': '选择题', '2': '单词拼写', '3': '填空题' };
+
+    return res.json({
+      code: 200,
+      data: {
+        questionId: r.wrong_id,
+        questionType: r.question_type,
+        questionTypeName: typeMap[r.question_type] || r.question_type,
+        questionContent: r.question_content,
+        correctAnswer: r.correct_answer,
+        wrongAnswer: r.student_answer,
+        classLevel: r.class_level,
+        wrongCount: r.wrong_count,
+        taskName: r.task_name,
+        createTime: r.create_time,
+        errorDate: r.create_time ? r.create_time.toISOString().split('T')[0] : '',
+        mastered: r.is_mastered === '1'
+      }
+    });
+  } catch (error) {
+    console.error('获取错题详情错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -733,21 +791,23 @@ router.get('/error/:questionId', authMiddleware, async (req, res) => {
  * 删除单条错题
  */
 router.delete('/error/:questionId', authMiddleware, async (req, res) => {
-  await delay(300);
   const questionId = parseInt(req.params.questionId);
-  const index = mockErrorListData.findIndex(e => e.questionId === questionId);
-  
-  if (index === -1) {
-    return res.json({ code: 404, msg: '错题记录不存在' });
+
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM elia_wrong_question WHERE wrong_id = ?',
+      [questionId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.json({ code: 404, msg: '错题记录不存在' });
+    }
+
+    return res.json({ code: 200, msg: '删除成功' });
+  } catch (error) {
+    console.error('删除错题错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  // 模拟删除
-  mockErrorListData.splice(index, 1);
-  
-  return res.json({
-    code: 200,
-    msg: '删除成功'
-  });
 });
 
 module.exports = router;

@@ -1,192 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const { pool } = require('../db/pool');
 const { authMiddleware } = require('../middleware/auth');
 
-// ==================== 学生学习概览数据（根据用户区分）====================
-const mockStudentOverviewData = {
-  student: {
-    todayWordsLearned: 15,
-    totalWrongQuestions: 15,
-    classRank: 5,
-    pendingTasks: 3,
-    todayStudyMinutes: 45,
-    todayTasksCompleted: 2,
-    totalStudyMinutes: 1850,
-    masteredWords: 128,
-    tasksCompleted: 8,
-    totalWordsSearched: 256
-  },
-  lisi: {
-    todayWordsLearned: 20,
-    totalWrongQuestions: 8,
-    classRank: 3,
-    pendingTasks: 2,
-    todayStudyMinutes: 60,
-    todayTasksCompleted: 3,
-    totalStudyMinutes: 2200,
-    masteredWords: 200,
-    tasksCompleted: 12,
-    totalWordsSearched: 320
-  },
-  zhangsan: {
-    todayWordsLearned: 25,
-    totalWrongQuestions: 5,
-    classRank: 2,
-    pendingTasks: 1,
-    todayStudyMinutes: 80,
-    todayTasksCompleted: 4,
-    totalStudyMinutes: 3500,
-    masteredWords: 320,
-    tasksCompleted: 18,
-    totalWordsSearched: 450
-  }
-};
-
-// ==================== 打卡状态数据 ====================
-// 生成从3月到今天的打卡记录（连续5天，累计16天）
-const generateClockInDates = () => {
-  // 从3月到4月15日，随机打一些卡（累计16天 = 11天历史 + 5天连续）
-  const historicalDates = [
-    '2026-03-03', '2026-03-08', '2026-03-12', '2026-03-17', '2026-03-22',
-    '2026-03-26', '2026-03-30', '2026-04-03', '2026-04-07', '2026-04-11',
-    '2026-04-15'
-  ];
-  // 最近5天连续打卡（4月16日到4月20日）
-  const recentConsecutive = ['2026-04-16', '2026-04-17', '2026-04-18', '2026-04-19', '2026-04-20'];
-  return [...historicalDates, ...recentConsecutive]; // 共16天
-};
-
-const mockClockInData = {
-  student: {
-    clockedIn: true,
-    clockInDate: '2026-04-20',
-    consecutiveDays: 5,
-    totalDays: 16,
-    clockInDates: generateClockInDates()
-  },
-  lisi: {
-    clockedIn: true,
-    clockInDate: '2026-04-20',
-    consecutiveDays: 12,
-    totalDays: 45
-  },
-  zhangsan: {
-    clockedIn: true,
-    clockInDate: '2026-04-20',
-    consecutiveDays: 30,
-    totalDays: 90
-  }
-};
-
-// ==================== 近7天任务完成情况 ====================
-const mockWeeklyTasksData = {
-  student: [
-    { date: '2026-04-14', completedCount: 5 },
-    { date: '2026-04-15', completedCount: 8 },
-    { date: '2026-04-16', completedCount: 12 },
-    { date: '2026-04-17', completedCount: 6 },
-    { date: '2026-04-18', completedCount: 10 },
-    { date: '2026-04-19', completedCount: 7 },
-    { date: '2026-04-20', completedCount: 4 }
-  ],
-  lisi: [
-    { date: '2026-04-14', completedCount: 10 },
-    { date: '2026-04-15', completedCount: 15 },
-    { date: '2026-04-16', completedCount: 18 },
-    { date: '2026-04-17', completedCount: 12 },
-    { date: '2026-04-18', completedCount: 20 },
-    { date: '2026-04-19', completedCount: 14 },
-    { date: '2026-04-20', completedCount: 8 }
-  ],
-  zhangsan: [
-    { date: '2026-04-14', completedCount: 15 },
-    { date: '2026-04-15', completedCount: 20 },
-    { date: '2026-04-16', completedCount: 25 },
-    { date: '2026-04-17', completedCount: 18 },
-    { date: '2026-04-18', completedCount: 22 },
-    { date: '2026-04-19', completedCount: 16 },
-    { date: '2026-04-20', completedCount: 10 }
-  ]
-};
-
-// ==================== 近7天单词学习情况 ====================
-const mockWeeklyWordsData = {
-  student: [
-    { date: '2026-04-14', masteredCount: 8 },
-    { date: '2026-04-15', masteredCount: 12 },
-    { date: '2026-04-16', masteredCount: 15 },
-    { date: '2026-04-17', masteredCount: 10 },
-    { date: '2026-04-18', masteredCount: 14 },
-    { date: '2026-04-19', masteredCount: 11 },
-    { date: '2026-04-20', masteredCount: 6 }
-  ],
-  lisi: [
-    { date: '2026-04-14', masteredCount: 12 },
-    { date: '2026-04-15', masteredCount: 18 },
-    { date: '2026-04-16', masteredCount: 22 },
-    { date: '2026-04-17', masteredCount: 15 },
-    { date: '2026-04-18', masteredCount: 20 },
-    { date: '2026-04-19', masteredCount: 16 },
-    { date: '2026-04-20', masteredCount: 10 }
-  ],
-  zhangsan: [
-    { date: '2026-04-14', masteredCount: 18 },
-    { date: '2026-04-15', masteredCount: 25 },
-    { date: '2026-04-16', masteredCount: 30 },
-    { date: '2026-04-17', masteredCount: 22 },
-    { date: '2026-04-18', masteredCount: 28 },
-    { date: '2026-04-19', masteredCount: 20 },
-    { date: '2026-04-20', masteredCount: 12 }
-  ]
-};
-
-// ==================== 未完成任务列表（首页展示）====================
-const mockHomePendingTasksData = {
-  student: [
-    { id: 1, title: '第三单元单词测试', deadline: '2026-04-25', questionCount: 50, urgency: 'normal' },
-    { id: 2, title: '阅读理解练习', deadline: '2026-04-28', questionCount: 30, urgency: 'normal' },
-    { id: 3, title: '单词听写', deadline: '2026-04-30', questionCount: 40, urgency: 'comfortable' }
-  ],
-  lisi: [
-    { id: 4, title: '第五单元语法练习', deadline: '2026-04-22', questionCount: 45, urgency: 'urgent' },
-    { id: 5, title: '完形填空练习', deadline: '2026-04-26', questionCount: 35, urgency: 'normal' }
-  ],
-  zhangsan: [
-    { id: 6, title: '写作练习', deadline: '2026-04-23', questionCount: 20, urgency: 'urgent' }
-  ]
-};
-
-// ==================== 班级任务完成进度 ====================
-const mockClassProgressData = {
-  student: {
-    completed: 12,
-    total: 18,
-    rate: 67,
-    ranking: 3,
-    totalClasses: 8
-  },
-  lisi: {
-    completed: 15,
-    total: 20,
-    rate: 75,
-    ranking: 2,
-    totalClasses: 8
-  },
-  zhangsan: {
-    completed: 18,
-    total: 20,
-    rate: 90,
-    ranking: 1,
-    totalClasses: 8
-  }
-};
-
-// 模拟延迟
-const delay = (ms = 300) => new Promise(resolve => setTimeout(resolve, ms));
-
-// 获取当前用户名
-const getUsername = (req) => {
-  return req.user?.username || 'student';
+// 获取当前用户ID
+const getUserId = (req) => {
+  return req.user?.id || 1;
 };
 
 /**
@@ -194,10 +13,78 @@ const getUsername = (req) => {
  * 获取学生概览数据
  */
 router.get('/overview', authMiddleware, async (req, res) => {
-  await delay(300);
-  const username = getUsername(req);
-  const overview = mockStudentOverviewData[username] || mockStudentOverviewData.student;
-  return res.json({ code: 200, data: overview });
+  const userId = getUserId(req);
+
+  try {
+    // 获取今日学习记录
+    const today = new Date().toISOString().split('T')[0];
+    const [todayRows] = await pool.query(
+      `SELECT study_duration, words_studied, words_mastered, tasks_completed, words_searched
+       FROM elia_learning_record 
+       WHERE user_id = ? AND record_date = ?`,
+      [userId, today]
+    );
+
+    const todayData = todayRows[0] || {
+      study_duration: 0,
+      words_studied: 0,
+      words_mastered: 0,
+      tasks_completed: 0,
+      words_searched: 0
+    };
+
+    // 获取总错题数
+    const [wrongRows] = await pool.query(
+      'SELECT COUNT(*) as total FROM elia_wrong_question WHERE user_id = ?',
+      [userId]
+    );
+
+    // 获取班级排名
+    const [rankRows] = await pool.query(
+      `SELECT class_rank FROM elia_class_member WHERE user_id = ? AND member_status = '1'`,
+      [userId]
+    );
+
+    // 获取待完成任务数
+    const [taskRows] = await pool.query(
+      `SELECT COUNT(*) as pending 
+       FROM elia_student_task st
+       JOIN elia_task t ON st.task_id = t.task_id
+       WHERE st.user_id = ? AND st.task_status = '0' AND t.end_time > NOW()`,
+      [userId]
+    );
+
+    // 获取用户总学习数据
+    const [userRows] = await pool.query(
+      'SELECT total_study_time, total_words_searched, total_tasks_completed FROM sys_user WHERE user_id = ?',
+      [userId]
+    );
+
+    // 获取已掌握单词数
+    const [masteredRows] = await pool.query(
+      "SELECT COUNT(*) as mastered FROM elia_user_word_record WHERE user_id = ? AND is_mastered = '1'",
+      [userId]
+    );
+
+    return res.json({
+      code: 200,
+      data: {
+        todayWordsLearned: todayData.words_studied || 0,
+        totalWrongQuestions: wrongRows[0].total || 0,
+        classRank: rankRows[0]?.class_rank || 0,
+        pendingTasks: taskRows[0].pending || 0,
+        todayStudyMinutes: todayData.study_duration || 0,
+        todayTasksCompleted: todayData.tasks_completed || 0,
+        totalStudyMinutes: userRows[0]?.total_study_time || 0,
+        masteredWords: masteredRows[0].mastered || 0,
+        tasksCompleted: userRows[0]?.total_tasks_completed || 0,
+        totalWordsSearched: userRows[0]?.total_words_searched || 0
+      }
+    });
+  } catch (error) {
+    console.error('获取学生概览错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -205,53 +92,79 @@ router.get('/overview', authMiddleware, async (req, res) => {
  * 打卡
  */
 router.post('/clock-in', authMiddleware, async (req, res) => {
-  await delay(300);
-  const username = getUsername(req);
+  const userId = getUserId(req);
   const today = new Date().toISOString().split('T')[0];
 
-  // 获取当前打卡数据
-  let currentData = mockClockInData[username] || { ...mockClockInData.student };
+  try {
+    // 检查今日是否已打卡
+    const [recordRows] = await pool.query(
+      'SELECT record_id FROM elia_learning_record WHERE user_id = ? AND record_date = ?',
+      [userId, today]
+    );
 
-  // 初始化打卡日期数组
-  if (!currentData.clockInDates) {
-    currentData.clockInDates = generateClockInDates();
-  }
-
-  // 计算昨天的日期
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
-
-  // 更新打卡记录
-  if (!currentData.clockInDates.includes(today)) {
-    currentData.clockInDates.push(today);
-    currentData.totalDays = (currentData.totalDays || 16) + 1;
-
-    // 计算连续打卡天数：检查昨天是否打卡
-    if (currentData.clockInDates.includes(yesterdayStr)) {
-      // 昨天已打卡，连续天数+1
-      currentData.consecutiveDays = (currentData.consecutiveDays || 5) + 1;
-    } else {
-      // 昨天未打卡（漏打了），连续天数重置为1
-      currentData.consecutiveDays = 1;
+    if (recordRows.length > 0) {
+      // 已有记录，更新打卡状态
+      return res.json({
+        code: 200,
+        data: {
+          clockedIn: true,
+          clockInDate: today,
+          message: '今日已打卡'
+        }
+      });
     }
-  }
 
-  currentData.clockedIn = true;
-  currentData.clockInDate = today;
+    // 创建今日学习记录
+    await pool.query(
+      `INSERT INTO elia_learning_record (user_id, record_date, study_duration, words_studied, words_mastered, tasks_completed, create_time)
+       VALUES (?, ?, 0, 0, 0, 0, NOW())`,
+      [userId, today]
+    );
 
-  // 更新内存中的数据
-  mockClockInData[username] = currentData;
+    // 计算连续打卡天数
+    const [streakRows] = await pool.query(
+      `SELECT record_date FROM elia_learning_record 
+       WHERE user_id = ? AND record_date <= ?
+       ORDER BY record_date DESC
+       LIMIT 30`,
+      [userId, today]
+    );
 
-  return res.json({
-    code: 200,
-    data: {
-      clockedIn: true,
-      clockInDate: today,
-      consecutiveDays: currentData.consecutiveDays,
-      totalDays: currentData.totalDays
+    let consecutiveDays = 0;
+    let prevDate = null;
+    for (const row of streakRows) {
+      if (prevDate === null) {
+        consecutiveDays = 1;
+      } else {
+        const diffDays = Math.floor((new Date(prevDate) - new Date(row.record_date)) / (1000 * 60 * 60 * 24));
+        if (diffDays === 1) {
+          consecutiveDays++;
+        } else {
+          break;
+        }
+      }
+      prevDate = row.record_date;
     }
-  });
+
+    // 获取总打卡天数
+    const [totalRows] = await pool.query(
+      'SELECT COUNT(*) as total FROM elia_learning_record WHERE user_id = ?',
+      [userId]
+    );
+
+    return res.json({
+      code: 200,
+      data: {
+        clockedIn: true,
+        clockInDate: today,
+        consecutiveDays,
+        totalDays: totalRows[0].total
+      }
+    });
+  } catch (error) {
+    console.error('打卡错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -259,10 +172,68 @@ router.post('/clock-in', authMiddleware, async (req, res) => {
  * 获取打卡状态
  */
 router.get('/clock-in-status', authMiddleware, async (req, res) => {
-  await delay(200);
-  const username = getUsername(req);
-  const clockIn = mockClockInData[username] || mockClockInData.student;
-  return res.json({ code: 200, data: clockIn });
+  const userId = getUserId(req);
+  const today = new Date().toISOString().split('T')[0];
+
+  try {
+    // 检查今日是否已打卡
+    const [todayRows] = await pool.query(
+      'SELECT record_id FROM elia_learning_record WHERE user_id = ? AND record_date = ?',
+      [userId, today]
+    );
+
+    // 获取总打卡天数
+    const [totalRows] = await pool.query(
+      'SELECT COUNT(*) as total FROM elia_learning_record WHERE user_id = ?',
+      [userId]
+    );
+
+    // 计算连续打卡天数
+    const [streakRows] = await pool.query(
+      `SELECT record_date FROM elia_learning_record 
+       WHERE user_id = ?
+       ORDER BY record_date DESC
+       LIMIT 30`,
+      [userId]
+    );
+
+    let consecutiveDays = 0;
+    let prevDate = null;
+    for (const row of streakRows) {
+      if (prevDate === null) {
+        consecutiveDays = 1;
+      } else {
+        const diffDays = Math.floor((new Date(prevDate) - new Date(row.record_date)) / (1000 * 60 * 60 * 24));
+        if (diffDays === 1) {
+          consecutiveDays++;
+        } else {
+          break;
+        }
+      }
+      prevDate = row.record_date;
+    }
+
+    // 获取打卡日期列表
+    const [dateRows] = await pool.query(
+      'SELECT record_date FROM elia_learning_record WHERE user_id = ? ORDER BY record_date DESC LIMIT 30',
+      [userId]
+    );
+    const clockInDates = dateRows.map(r => r.record_date.toISOString().split('T')[0]);
+
+    return res.json({
+      code: 200,
+      data: {
+        clockedIn: todayRows.length > 0,
+        clockInDate: todayRows.length > 0 ? today : null,
+        consecutiveDays,
+        totalDays: totalRows[0].total,
+        clockInDates
+      }
+    });
+  } catch (error) {
+    console.error('获取打卡状态错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -270,10 +241,35 @@ router.get('/clock-in-status', authMiddleware, async (req, res) => {
  * 获取近7天任务完成情况
  */
 router.get('/weekly-tasks', authMiddleware, async (req, res) => {
-  await delay(300);
-  const username = getUsername(req);
-  const data = mockWeeklyTasksData[username] || mockWeeklyTasksData.student;
-  return res.json({ code: 200, data: data });
+  const userId = getUserId(req);
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT record_date, tasks_completed
+       FROM elia_learning_record 
+       WHERE user_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+       ORDER BY record_date ASC`,
+      [userId]
+    );
+
+    // 填充缺失的日期
+    const data = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      const record = rows.find(r => r.record_date.toISOString().split('T')[0] === dateStr);
+      data.push({
+        date: dateStr,
+        completedCount: record?.tasks_completed || 0
+      });
+    }
+
+    return res.json({ code: 200, data });
+  } catch (error) {
+    console.error('获取近7天任务完成情况错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -281,10 +277,35 @@ router.get('/weekly-tasks', authMiddleware, async (req, res) => {
  * 获取近7天单词学习情况（单词学习趋势）
  */
 router.get('/weekly-words', authMiddleware, async (req, res) => {
-  await delay(300);
-  const username = getUsername(req);
-  const data = mockWeeklyWordsData[username] || mockWeeklyWordsData.student;
-  return res.json({ code: 200, data: data });
+  const userId = getUserId(req);
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT record_date, words_mastered
+       FROM elia_learning_record 
+       WHERE user_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+       ORDER BY record_date ASC`,
+      [userId]
+    );
+
+    // 填充缺失的日期
+    const data = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      const record = rows.find(r => r.record_date.toISOString().split('T')[0] === dateStr);
+      data.push({
+        date: dateStr,
+        masteredCount: record?.words_mastered || 0
+      });
+    }
+
+    return res.json({ code: 200, data });
+  } catch (error) {
+    console.error('获取近7天单词学习情况错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -292,10 +313,37 @@ router.get('/weekly-words', authMiddleware, async (req, res) => {
  * 获取首页未完成任务列表
  */
 router.get('/pending-tasks', authMiddleware, async (req, res) => {
-  await delay(200);
-  const username = getUsername(req);
-  const data = mockHomePendingTasksData[username] || mockHomePendingTasksData.student;
-  return res.json({ code: 200, data: data });
+  const userId = getUserId(req);
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT t.task_id, t.task_name, t.end_time, t.question_count,
+        CASE 
+          WHEN t.end_time < DATE_ADD(NOW(), INTERVAL 3 DAY) THEN 'urgent'
+          WHEN t.end_time < DATE_ADD(NOW(), INTERVAL 7 DAY) THEN 'normal'
+          ELSE 'comfortable'
+        END as urgency
+       FROM elia_student_task st
+       JOIN elia_task t ON st.task_id = t.task_id
+       WHERE st.user_id = ? AND st.task_status = '0' AND t.end_time > NOW()
+       ORDER BY t.end_time ASC
+       LIMIT 10`,
+      [userId]
+    );
+
+    const data = rows.map(r => ({
+      id: r.task_id,
+      title: r.task_name,
+      deadline: r.end_time.toISOString().split('T')[0],
+      questionCount: r.question_count,
+      urgency: r.urgency
+    }));
+
+    return res.json({ code: 200, data });
+  } catch (error) {
+    console.error('获取未完成任务列表错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -303,10 +351,61 @@ router.get('/pending-tasks', authMiddleware, async (req, res) => {
  * 获取班级任务完成进度
  */
 router.get('/class-progress', authMiddleware, async (req, res) => {
-  await delay(200);
-  const username = getUsername(req);
-  const data = mockClassProgressData[username] || mockClassProgressData.student;
-  return res.json({ code: 200, data: data });
+  const userId = getUserId(req);
+
+  try {
+    // 获取用户当前班级
+    const [memberRows] = await pool.query(
+      'SELECT class_id FROM elia_class_member WHERE user_id = ? AND member_status = "1"',
+      [userId]
+    );
+
+    if (memberRows.length === 0) {
+      return res.json({
+        code: 200,
+        data: { completed: 0, total: 0, rate: 0, ranking: 0, totalClasses: 0 }
+      });
+    }
+
+    const classId = memberRows[0].class_id;
+
+    // 获取用户任务完成情况
+    const [taskRows] = await pool.query(
+      `SELECT COUNT(*) as total, SUM(CASE WHEN task_status = '2' THEN 1 ELSE 0 END) as completed
+       FROM elia_student_task WHERE user_id = ? AND class_id = ?`,
+      [userId, classId]
+    );
+
+    const completed = taskRows[0].completed || 0;
+    const total = taskRows[0].total || 0;
+    const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    // 获取班级排名
+    const [rankRows] = await pool.query(
+      `SELECT user_id, class_rank FROM elia_class_member 
+       WHERE class_id = ? AND member_status = '1' 
+       ORDER BY class_rank ASC`,
+      [classId]
+    );
+    const ranking = rankRows.findIndex(r => r.user_id === userId) + 1;
+
+    // 获取班级总数
+    const [classRows] = await pool.query('SELECT COUNT(*) as total FROM elia_class WHERE class_status = "1"');
+
+    return res.json({
+      code: 200,
+      data: {
+        completed,
+        total,
+        rate,
+        ranking,
+        totalClasses: classRows[0].total
+      }
+    });
+  } catch (error) {
+    console.error('获取班级任务完成进度错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 module.exports = router;

@@ -1,111 +1,58 @@
 const express = require('express');
 const router = express.Router();
+const { pool } = require('../db/pool');
 const { authMiddleware } = require('../middleware/auth');
 
-// ==================== 老师ID与名字映射 ====================
-const teacherNameMap = {
-  'teacher': '张老师',
-  'teacherLi': '李老师',
-  'teacherWang': '王老师'
+// 获取当前用户ID
+const getUserId = (req) => {
+  return req.user?.id || 1;
 };
-
-// 获取老师名字
-const getTeacherName = (teacherId) => {
-  return teacherNameMap[teacherId] || teacherId || '未知教师';
-};
-
-// ==================== 班级列表数据 ====================
-const mockTeacherClassListData = [
-  {
-    classId: 1,
-    className: 'A级-英语精英班',
-    classLevel: 'A',
-    currentStudents: 25,
-    maxStudents: 30,
-    taskCount: 15,
-    createTime: '2026-03-01',
-    pendingApplicationCount: 2,
-    teacherId: 'teacher',
-    teacherName: '张老师'
-  },
-  {
-    classId: 2,
-    className: 'B级-英语进阶班',
-    classLevel: 'B',
-    currentStudents: 35,
-    maxStudents: 40,
-    taskCount: 12,
-    createTime: '2026-03-05',
-    pendingApplicationCount: 3,
-    teacherId: 'teacher',
-    teacherName: '张老师'
-  },
-  {
-    classId: 3,
-    className: 'C级-英语提高班',
-    classLevel: 'C',
-    currentStudents: 48,
-    maxStudents: 50,
-    taskCount: 10,
-    createTime: '2026-02-20',
-    pendingApplicationCount: 1,
-    teacherId: 'teacherLi',
-    teacherName: '李老师'
-  },
-  {
-    classId: 4,
-    className: 'D级-英语基础班',
-    classLevel: 'D',
-    currentStudents: 48,
-    maxStudents: 50,
-    taskCount: 8,
-    createTime: '2026-02-15',
-    pendingApplicationCount: 2,
-    teacherId: 'teacherWang',
-    teacherName: '王老师'
-  }
-];
-
-// 任务类型映射
-const taskTypeMap = {
-  '1': '单词学习',
-  '2': '单词测试',
-  '3': '综合练习'
-};
-
-// 模拟延迟
-const delay = (ms = 300) => new Promise(resolve => setTimeout(resolve, ms));
-
-// 获取当前用户名
-const getUsername = (req) => {
-  return req.user?.username || 'teacher';
-};
-
-// 班级列表（内存存储）
-let _localClassList = [...mockTeacherClassListData];
-
-// ==================== 待审核班级列表 ====================
-let _pendingClassList = [];
 
 /**
  * GET /api/teacher-class/overview
  * 获取班级概览数据
  */
 router.get('/overview', authMiddleware, async (req, res) => {
-  await delay(300);
-  const username = getUsername(req);
-  // 只统计已审核通过的班级
-  const teacherClassList = _localClassList.filter(c => c.teacherId === username);
-  const totalPending = teacherClassList.reduce((sum, c) => sum + (c.pendingApplicationCount || 0), 0);
-  
-  return res.json({
-    code: 200,
-    data: {
-      totalClasses: teacherClassList.length,
-      avgCompletionRate: 80,
-      pendingApplications: totalPending
-    }
-  });
+  const userId = getUserId(req);
+
+  try {
+    // 获取教师班级数
+    const [classRows] = await pool.query(
+      'SELECT COUNT(*) as total FROM elia_class WHERE teacher_id = ? AND class_status = "1"',
+      [userId]
+    );
+
+    // 获取待审核申请数
+    const [applicationRows] = await pool.query(
+      `SELECT COUNT(*) as total
+       FROM elia_class_application a
+       JOIN elia_class c ON a.class_id = c.class_id
+       WHERE c.teacher_id = ? AND a.application_status = '0'`,
+      [userId]
+    );
+
+    // 获取平均完成率
+    const [completionRows] = await pool.query(
+      `SELECT AVG(CASE WHEN st.task_status = '2' THEN 100 ELSE 0 END) as avg_rate
+       FROM elia_class c
+       LEFT JOIN elia_class_member cm ON c.class_id = cm.class_id AND cm.member_status = '1'
+       LEFT JOIN elia_student_task st ON cm.user_id = st.user_id AND cm.class_id = st.class_id
+       WHERE c.teacher_id = ? AND c.class_status = '1'`,
+      [userId]
+    );
+
+    return res.json({
+      code: 200,
+      data: {
+        totalClasses: classRows[0].total || 0,
+        avgCompletionRate: Math.round(completionRows[0].avg_rate || 0),
+        pendingApplications: applicationRows[0].total || 0
+      }
+    });
+  } catch (error) {
+    console.error('获取班级概览错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -113,26 +60,55 @@ router.get('/overview', authMiddleware, async (req, res) => {
  * 获取班级列表（当前老师）
  */
 router.get('/list', authMiddleware, async (req, res) => {
-  await delay(300);
-  const username = getUsername(req);
+  const userId = getUserId(req);
   const { classLevel, pageNum = 1, pageSize = 100 } = req.query;
-  
-  let filteredList = [..._localClassList].filter(c => c.teacherId === username);
-  
-  // 按等级筛选
-  if (classLevel) {
-    filteredList = filteredList.filter(c => c.classLevel === classLevel);
+
+  try {
+    let sql = `
+      SELECT c.*, 
+             (SELECT COUNT(*) FROM elia_class_application a WHERE a.class_id = c.class_id AND a.application_status = '0') as pending_application_count
+      FROM elia_class c
+      WHERE c.teacher_id = ? AND c.class_status = '1'
+    `;
+    let countSql = 'SELECT COUNT(*) as total FROM elia_class WHERE teacher_id = ? AND class_status = "1"';
+    const params = [userId];
+    const countParams = [userId];
+
+    if (classLevel) {
+      sql += ' AND c.class_level = ?';
+      countSql += ' AND class_level = ?';
+      params.push(classLevel);
+      countParams.push(classLevel);
+    }
+
+    // 获取总数
+    const [countRows] = await pool.query(countSql, countParams);
+    const total = countRows[0].total;
+
+    // 分页
+    const offset = (parseInt(pageNum) - 1) * parseInt(pageSize);
+    sql += ' ORDER BY c.create_time DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(pageSize), offset);
+
+    const [rows] = await pool.query(sql, params);
+
+    const list = rows.map(c => ({
+      classId: c.class_id,
+      className: c.class_name,
+      classLevel: c.class_level,
+      currentStudents: c.current_students || 0,
+      maxStudents: c.max_students,
+      taskCount: c.task_requirement || 0,
+      createTime: c.create_time,
+      pendingApplicationCount: c.pending_application_count || 0,
+      teacherId: c.teacher_id
+    }));
+
+    return res.json({ code: 200, rows: list, total });
+  } catch (error) {
+    console.error('获取班级列表错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  // 分页
-  const start = (parseInt(pageNum) - 1) * parseInt(pageSize);
-  const end = start + parseInt(pageSize);
-  
-  return res.json({
-    code: 200,
-    rows: filteredList.slice(start, end),
-    total: filteredList.length
-  });
 });
 
 /**
@@ -140,30 +116,61 @@ router.get('/list', authMiddleware, async (req, res) => {
  * 获取所有班级列表（管理员用）
  */
 router.get('/all', authMiddleware, async (req, res) => {
-  await delay(300);
   const { classLevel, teacherId, pageNum = 1, pageSize = 100 } = req.query;
-  
-  let filteredList = [..._localClassList];
-  
-  // 按等级筛选
-  if (classLevel) {
-    filteredList = filteredList.filter(c => c.classLevel === classLevel);
+
+  try {
+    let sql = `
+      SELECT c.*, u.nick_name as teacher_name
+      FROM elia_class c
+      LEFT JOIN sys_user u ON c.teacher_id = u.user_id
+      WHERE c.class_status = '1'
+    `;
+    let countSql = 'SELECT COUNT(*) as total FROM elia_class WHERE class_status = "1"';
+    const params = [];
+    const countParams = [];
+
+    if (classLevel) {
+      sql += ' AND c.class_level = ?';
+      countSql += ' AND class_level = ?';
+      params.push(classLevel);
+      countParams.push(classLevel);
+    }
+
+    if (teacherId) {
+      sql += ' AND c.teacher_id = ?';
+      countSql += ' AND teacher_id = ?';
+      params.push(teacherId);
+      countParams.push(teacherId);
+    }
+
+    // 获取总数
+    const [countRows] = await pool.query(countSql, countParams);
+    const total = countRows[0].total;
+
+    // 分页
+    const offset = (parseInt(pageNum) - 1) * parseInt(pageSize);
+    sql += ' ORDER BY c.create_time DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(pageSize), offset);
+
+    const [rows] = await pool.query(sql, params);
+
+    const list = rows.map(c => ({
+      classId: c.class_id,
+      className: c.class_name,
+      classLevel: c.class_level,
+      currentStudents: c.current_students || 0,
+      maxStudents: c.max_students,
+      taskCount: c.task_requirement || 0,
+      createTime: c.create_time,
+      teacherId: c.teacher_id,
+      teacherName: c.teacher_name
+    }));
+
+    return res.json({ code: 200, rows: list, total });
+  } catch (error) {
+    console.error('获取所有班级列表错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  // 按老师筛选
-  if (teacherId) {
-    filteredList = filteredList.filter(c => c.teacherId === teacherId);
-  }
-  
-  // 分页
-  const start = (parseInt(pageNum) - 1) * parseInt(pageSize);
-  const end = start + parseInt(pageSize);
-  
-  return res.json({
-    code: 200,
-    rows: filteredList.slice(start, end),
-    total: filteredList.length
-  });
 });
 
 /**
@@ -171,40 +178,36 @@ router.get('/all', authMiddleware, async (req, res) => {
  * 创建班级（需管理员审核）
  */
 router.post('/create', authMiddleware, async (req, res) => {
-  await delay(300);
-  const username = getUsername(req);
-  const { className, classLevel, maxStudents, taskRequirement } = req.body;
-  
+  const userId = getUserId(req);
+  const { className, classLevel, maxStudents, taskRequirement, classDescription } = req.body;
+
   if (!className || !classLevel || !maxStudents) {
     return res.json({ code: 400, msg: '缺少必要参数' });
   }
-  
-  const newClass = {
-    classId: Date.now(),
-    className,
-    classLevel,
-    currentStudents: 0,
-    maxStudents,
-    taskCount: taskRequirement || 0,
-    createTime: new Date().toISOString().split('T')[0],
-    pendingApplicationCount: 0,
-    teacherId: username,
-    teacherName: getTeacherName(username),
-    status: 'pending',  // pending: 待审核, approved: 已通过, rejected: 已拒绝
-    createTimeRaw: new Date().toISOString()
-  };
-  
-  // 班级先进入待审核列表
-  _pendingClassList.push(newClass);
-  
-  return res.json({
-    code: 200,
-    msg: '班级创建成功，等待管理员审核',
-    data: {
-      classId: newClass.classId,
-      status: 'pending'
-    }
-  });
+
+  try {
+    // 生成班级编码
+    const classCode = `${classLevel}${Date.now().toString().slice(-6)}`;
+
+    const [result] = await pool.query(
+      `INSERT INTO elia_class 
+       (class_name, class_code, class_level, teacher_id, class_description, max_students, current_students, task_requirement, class_status, create_time)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?, '0', NOW())`,
+      [className, classCode, classLevel, userId, classDescription || '', maxStudents, taskRequirement || 0]
+    );
+
+    return res.json({
+      code: 200,
+      msg: '班级创建成功，等待管理员审核',
+      data: {
+        classId: result.insertId,
+        status: 'pending'
+      }
+    });
+  } catch (error) {
+    console.error('创建班级错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -212,12 +215,31 @@ router.post('/create', authMiddleware, async (req, res) => {
  * 获取待审核班级列表（管理员用）
  */
 router.get('/pending', authMiddleware, async (req, res) => {
-  await delay(300);
-  
-  return res.json({
-    code: 200,
-    data: _pendingClassList
-  });
+  try {
+    const [rows] = await pool.query(
+      `SELECT c.*, u.nick_name as teacher_name
+       FROM elia_class c
+       LEFT JOIN sys_user u ON c.teacher_id = u.user_id
+       WHERE c.class_status = '0'
+       ORDER BY c.create_time DESC`
+    );
+
+    const list = rows.map(c => ({
+      classId: c.class_id,
+      className: c.class_name,
+      classLevel: c.class_level,
+      maxStudents: c.max_students,
+      taskCount: c.task_requirement || 0,
+      createTime: c.create_time,
+      teacherId: c.teacher_id,
+      teacherName: c.teacher_name
+    }));
+
+    return res.json({ code: 200, data: list });
+  } catch (error) {
+    console.error('获取待审核班级列表错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 /**
@@ -225,25 +247,23 @@ router.get('/pending', authMiddleware, async (req, res) => {
  * 审核通过班级
  */
 router.post('/approve/:classId', authMiddleware, async (req, res) => {
-  await delay(300);
   const classId = parseInt(req.params.classId);
-  const index = _pendingClassList.findIndex(c => c.classId === classId);
-  
-  if (index === -1) {
-    return res.json({ code: 404, msg: '待审核班级不存在' });
+
+  try {
+    const [result] = await pool.query(
+      'UPDATE elia_class SET class_status = "1" WHERE class_id = ? AND class_status = "0"',
+      [classId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.json({ code: 404, msg: '待审核班级不存在' });
+    }
+
+    return res.json({ code: 200, msg: '班级审核通过' });
+  } catch (error) {
+    console.error('审核班级错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  const pendingClass = _pendingClassList[index];
-  
-  // 移出待审核列表，加入正式班级列表
-  _pendingClassList.splice(index, 1);
-  _localClassList.push(pendingClass);
-  
-  return res.json({
-    code: 200,
-    msg: '班级审核通过',
-    data: pendingClass
-  });
 });
 
 /**
@@ -251,24 +271,23 @@ router.post('/approve/:classId', authMiddleware, async (req, res) => {
  * 拒绝班级
  */
 router.post('/reject/:classId', authMiddleware, async (req, res) => {
-  await delay(300);
   const classId = parseInt(req.params.classId);
-  const index = _pendingClassList.findIndex(c => c.classId === classId);
-  
-  if (index === -1) {
-    return res.json({ code: 404, msg: '待审核班级不存在' });
+
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM elia_class WHERE class_id = ? AND class_status = "0"',
+      [classId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.json({ code: 404, msg: '待审核班级不存在' });
+    }
+
+    return res.json({ code: 200, msg: '班级已拒绝' });
+  } catch (error) {
+    console.error('拒绝班级错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  const rejectedClass = _pendingClassList[index];
-  
-  // 移出待审核列表
-  _pendingClassList.splice(index, 1);
-  
-  return res.json({
-    code: 200,
-    msg: '班级已拒绝',
-    data: rejectedClass
-  });
 });
 
 /**
@@ -276,16 +295,33 @@ router.post('/reject/:classId', authMiddleware, async (req, res) => {
  * 删除班级
  */
 router.delete('/delete/:classId', authMiddleware, async (req, res) => {
-  await delay(300);
   const classId = parseInt(req.params.classId);
-  const index = _localClassList.findIndex(c => c.classId === classId);
-  
-  if (index > -1) {
-    _localClassList.splice(index, 1);
+
+  try {
+    // 检查班级是否有学生
+    const [memberRows] = await pool.query(
+      'SELECT COUNT(*) as count FROM elia_class_member WHERE class_id = ? AND member_status = "1"',
+      [classId]
+    );
+
+    if (memberRows[0].count > 0) {
+      return res.json({ code: 400, msg: '班级中还有学生，无法删除' });
+    }
+
+    const [result] = await pool.query(
+      'DELETE FROM elia_class WHERE class_id = ?',
+      [classId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.json({ code: 404, msg: '班级不存在' });
+    }
+
     return res.json({ code: 200, msg: '班级删除成功' });
+  } catch (error) {
+    console.error('删除班级错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
   }
-  
-  return res.json({ code: 404, msg: '班级不存在' });
 });
 
 /**
@@ -293,28 +329,80 @@ router.delete('/delete/:classId', authMiddleware, async (req, res) => {
  * 发布任务
  */
 router.post('/publish-task', authMiddleware, async (req, res) => {
-  await delay(500);
-  const { classId, taskName, taskType, startTime, deadline, questions } = req.body;
-  
+  const userId = getUserId(req);
+  const { classId, taskName, taskType, startTime, deadline, questions, taskDescription } = req.body;
+
   if (!classId || !taskName || !taskType || !startTime || !deadline || !questions) {
     return res.json({ code: 400, msg: '缺少必要参数' });
   }
-  
-  const taskId = Date.now();
-  
-  // 验证班级是否存在
-  const classInfo = _localClassList.find(c => c.classId === classId);
-  if (!classInfo) {
-    return res.json({ code: 404, msg: '班级不存在' });
-  }
-  
-  return res.json({
-    code: 200,
-    msg: '任务发布成功',
-    data: {
-      taskId
+
+  try {
+    // 验证班级是否存在且属于当前教师
+    const [classRows] = await pool.query(
+      'SELECT * FROM elia_class WHERE class_id = ? AND teacher_id = ? AND class_status = "1"',
+      [classId, userId]
+    );
+
+    if (classRows.length === 0) {
+      return res.json({ code: 404, msg: '班级不存在或无权限' });
     }
-  });
+
+    const classInfo = classRows[0];
+
+    // 创建任务
+    const [taskResult] = await pool.query(
+      `INSERT INTO elia_task 
+       (task_name, task_type, class_id, class_level, teacher_id, task_description, question_count, start_time, end_time, task_status, is_published, publish_time, create_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '1', '1', NOW(), NOW())`,
+      [taskName, taskType, classId, classInfo.class_level, userId, taskDescription || '', questions.length, startTime, deadline]
+    );
+
+    const taskId = taskResult.insertId;
+
+    // 插入题目
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      await pool.query(
+        `INSERT INTO elia_task_question 
+         (task_id, question_type, question_content, correct_answer, options, score, difficulty_level, sort_order, create_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [
+          taskId,
+          q.type === 'choice' ? '1' : (q.type === 'spell' ? '2' : '3'),
+          q.content,
+          q.type === 'choice' ? JSON.stringify(q.correctIndexes || []) : q.answer,
+          q.options ? JSON.stringify(q.options) : null,
+          q.score || 10,
+          q.difficultyLevel || 1,
+          i + 1
+        ]
+      );
+    }
+
+    // 为班级所有学生创建任务记录
+    const [memberRows] = await pool.query(
+      'SELECT user_id FROM elia_class_member WHERE class_id = ? AND member_status = "1"',
+      [classId]
+    );
+
+    if (memberRows.length > 0) {
+      const now = new Date();
+      const taskRecords = memberRows.map(m => [m.user_id, taskId, classId, '0', now]);
+      await pool.query(
+        `INSERT INTO elia_student_task (user_id, task_id, class_id, task_status, create_time) VALUES ?`,
+        [taskRecords]
+      );
+    }
+
+    return res.json({
+      code: 200,
+      msg: '任务发布成功',
+      data: { taskId }
+    });
+  } catch (error) {
+    console.error('发布任务错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
 });
 
 module.exports = router;
