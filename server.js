@@ -11,6 +11,9 @@ const studentWordsRouter = require('./routes/studentWords');
 const teacherHomeRouter  = require('./routes/teacherHome');
 const teacherClassRouter = require('./routes/teacherClass');
 const teacherClassDataRouter = require('./routes/teacherClassData');
+const studentClassRouter = require('./routes/studentClass');
+const studentErrorsRouter = require('./routes/studentErrors');
+const studentClassDataRouter = require('./routes/studentClassData');
 const adminHomeRouter    = require('./routes/adminHome');
 
 const app = express();
@@ -37,6 +40,9 @@ app.use('/api/student-words', studentWordsRouter);
 app.use('/api/teacher-home',  teacherHomeRouter);
 app.use('/api/teacher-class', teacherClassRouter);
 app.use('/api/teacher-class-data', teacherClassDataRouter);
+app.use('/api/student-class', studentClassRouter);
+app.use('/api/student-errors', studentErrorsRouter);
+app.use('/api/student-class-data', studentClassDataRouter);
 app.use('/api/admin-home',    adminHomeRouter);
 
 // ─── 根路径：接口文档概览 ──────────────────────────────────
@@ -104,6 +110,43 @@ app.get('/', (req, res) => {
         'POST   /api/teacher-class/reject/:classId': '拒绝班级',
         'DELETE /api/teacher-class/delete/:classId': '删除班级',
         'POST   /api/teacher-class/publish-task':    '发布任务'
+      },
+      teacherClassData: {
+        'GET /api/teacher-class-data/class-list':           '获取班级下拉列表',
+        'GET /api/teacher-class-data/task-completion-chart': '获取班级任务完成对比图数据',
+        'GET /api/teacher-class-data/student-activity-chart': '获取学生学习活跃分析图数据',
+        'GET /api/teacher-class-data/error-type-chart':      '获取学生错题类型分析图数据'
+      },
+      studentClass: {
+        'GET  /api/student-class/status':       '获取班级状态',
+        'GET  /api/student-class/list':         '获取班级列表（支持等级筛选）',
+        'GET  /api/student-class/my-class':     '获取我的班级信息',
+        'GET  /api/student-class/ranking':      '获取班级排行榜 Top 15',
+        'GET  /api/student-class/trend':        '获取班级学习趋势（近8周）',
+        'POST /api/student-class/apply':        '申请入班',
+        'POST /api/student-class/quit':         '退出班级',
+        'POST /api/student-class/change':       '申请换班',
+        'GET  /api/student-class/check-apply':  '检查是否可以申请入班'
+      },
+      studentErrors: {
+        'GET    /api/student-errors/overview':      '获取错题统计概览',
+        'GET    /api/student-errors/list':          '获取错题列表（支持筛选）',
+        'GET    /api/student-errors/:wrongId':      '获取错题详情',
+        'POST   /api/student-errors/add':           '手动添加错题',
+        'PUT    /api/student-errors/:wrongId':      '编辑错题',
+        'DELETE /api/student-errors/:wrongId':      '删除单条错题',
+        'POST   /api/student-errors/batch-delete':  '批量删除错题',
+        'POST   /api/student-errors/import':        '导入错题（Excel文件）',
+        'GET    /api/student-errors/export':        '导出错题（Excel/PDF）',
+        'GET    /api/student-errors/template':      '下载导入模板',
+        'PUT    /api/student-errors/:wrongId/master': '标记已掌握/未掌握',
+        'GET    /api/student-errors/type-stats':    '获取错题类型统计'
+      },
+      studentClassData: {
+        'GET /api/student-class-data/statistics':   '获取顶部统计数据',
+        'GET /api/student-class-data/daily-study':  '获取每日学习数据（近7天）',
+        'GET /api/student-class-data/compare':      '获取班级vs个人完成率走势（近8周）',
+        'GET /api/student-class-data/ranking':      '获取班级排名（支持按学习时长/单词量排序）'
       },
       adminHome: {
         'GET /api/admin-home/overview':            '获取数据概览',
