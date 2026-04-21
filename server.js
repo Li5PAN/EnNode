@@ -10,6 +10,7 @@ const studentHomeRouter = require('./routes/studentHome');
 const studentWordsRouter = require('./routes/studentWords');
 const teacherHomeRouter  = require('./routes/teacherHome');
 const teacherClassRouter = require('./routes/teacherClass');
+const teacherClassDataRouter = require('./routes/teacherClassData');
 const adminHomeRouter    = require('./routes/adminHome');
 
 const app = express();
@@ -35,6 +36,7 @@ app.use('/api/student-home', studentHomeRouter);
 app.use('/api/student-words', studentWordsRouter);
 app.use('/api/teacher-home',  teacherHomeRouter);
 app.use('/api/teacher-class', teacherClassRouter);
+app.use('/api/teacher-class-data', teacherClassDataRouter);
 app.use('/api/admin-home',    adminHomeRouter);
 
 // ─── 根路径：接口文档概览 ──────────────────────────────────
@@ -80,7 +82,17 @@ app.get('/', (req, res) => {
         'GET /api/teacher-home/level-distribution':     '获取班级等级分布',
         'GET /api/teacher-home/task-completion':        '获取各班级任务完成率对比',
         'GET /api/teacher-home/activity-trend':         '获取学生活跃度趋势（最近7天）',
-        'GET /api/teacher-home/error-type-distribution': '获取错题类型分布'
+        'GET /api/teacher-home/error-type-distribution': '获取错题类型分布',
+        'GET /api/teacher-home/task/list':              '获取任务列表（支持等级筛选）',
+        'GET /api/teacher-home/task/:taskId':           '获取任务详情（包含题目）',
+        'POST /api/teacher-home/task/:taskId/remind':   '督促学生完成任务',
+        'GET /api/teacher-home/error/list':             '获取错题列表（支持搜索筛选）',
+        'GET /api/teacher-home/error/:questionId':      '获取错题详情',
+        'POST /api/teacher-home/error/import':          '导入错题（Excel文件）',
+        'GET /api/teacher-home/error/export':           '导出错题（Excel/PDF）',
+        'DELETE /api/teacher-home/error/:questionId':   '删除单条错题',
+        'POST /api/teacher-home/error/batch-delete':    '批量删除错题',
+        'GET /api/teacher-home/error/template':         '下载错题导入模板'
       },
       teacherClass: {
         'GET    /api/teacher-class/overview':        '获取班级概览数据',
@@ -99,7 +111,15 @@ app.get('/', (req, res) => {
         'GET /api/admin-home/user-growth-trend':   '获取用户增长趋势',
         'GET /api/admin-home/class-change-trend':  '获取换班变化趋势',
         'GET /api/admin-home/drop-class-trend':    '获取退班变化趋势',
-        'GET /api/admin-home/class-create-trend':  '获取班级创建趋势'
+        'GET /api/admin-home/class-create-trend':  '获取班级创建趋势',
+        'GET /api/admin-home/class-review/list':   '获取待审核班级列表（支持搜索）',
+        'GET /api/admin-home/class-review/management-list': '获取已通过班级列表',
+        'POST /api/admin-home/class-review/approve/:classId': '审核通过班级',
+        'POST /api/admin-home/class-review/reject/:classId': '拒绝班级',
+        'DELETE /api/admin-home/class-review/delete/:classId': '删除班级',
+        'GET /api/admin-home/user/list':           '获取人员列表（支持筛选+搜索）',
+        'GET /api/admin-home/user/:userId':        '获取人员详情',
+        'DELETE /api/admin-home/user/:userId':     '删除人员'
       },
       courses: {
         'GET    /api/courses':     '获取课程列表（支持 keyword/page/pageSize）',
