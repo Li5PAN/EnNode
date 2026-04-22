@@ -113,34 +113,28 @@ router.get('/list', authMiddleware, async (req, res) => {
 
 /**
  * GET /api/teacher-class/all
- * 获取所有班级列表（管理员用）
+ * 获取所有班级列表（教师只能看到自己创建的已审核通过的班级）
  */
 router.get('/all', authMiddleware, async (req, res) => {
-  const { classLevel, teacherId, pageNum = 1, pageSize = 100 } = req.query;
+  const userId = getUserId(req);
+  const { classLevel, pageNum = 1, pageSize = 100 } = req.query;
 
   try {
     let sql = `
       SELECT c.*, u.nick_name as teacher_name
       FROM elia_class c
       LEFT JOIN sys_user u ON c.teacher_id = u.user_id
-      WHERE c.class_status = '1'
+      WHERE c.class_status = '1' AND c.teacher_id = ?
     `;
-    let countSql = 'SELECT COUNT(*) as total FROM elia_class WHERE class_status = "1"';
-    const params = [];
-    const countParams = [];
+    let countSql = 'SELECT COUNT(*) as total FROM elia_class WHERE class_status = "1" AND teacher_id = ?';
+    const params = [userId];
+    const countParams = [userId];
 
     if (classLevel) {
       sql += ' AND c.class_level = ?';
       countSql += ' AND class_level = ?';
       params.push(classLevel);
       countParams.push(classLevel);
-    }
-
-    if (teacherId) {
-      sql += ' AND c.teacher_id = ?';
-      countSql += ' AND teacher_id = ?';
-      params.push(teacherId);
-      countParams.push(teacherId);
     }
 
     // 获取总数

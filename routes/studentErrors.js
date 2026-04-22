@@ -213,13 +213,14 @@ router.get('/template', async (req, res) => {
   const worksheet = workbook.addWorksheet('错题导入模板');
 
   worksheet.columns = [
-    { header: '题目类型(1选择题 2单词拼写 3填空题)', key: 'questionType', width: 25 },
-    { header: '题目内容', key: 'questionContent', width: 50 },
-    { header: '正确答案', key: 'correctAnswer', width: 25 },
-    { header: '您的答案', key: 'userAnswer', width: 25 },
-    { header: '所属任务ID', key: 'taskId', width: 15 },
-    { header: '错误日期(YYYY-MM-DD)', key: 'wrongDate', width: 20 },
-    { header: '解析', key: 'explanation', width: 40 }
+    { header: '题目类型(1选择题 2单词拼写 3填空题)', key: 'questionType', width: 20 },
+    { header: '任务名称', key: 'taskName', width: 20 },
+    { header: '错误日期', key: 'errorDate', width: 20 },
+    { header: '题目内容', key: 'questionContent', width: 40 },
+    { header: '正确答案', key: 'correctAnswer', width: 20 },
+    { header: '学生答案', key: 'wrongAnswer', width: 20 },
+    { header: '错误次数', key: 'wrongCount', width: 12 },
+    { header: '是否已掌握(0未掌握 1已掌握)', key: 'mastered', width: 18 }
   ];
 
   worksheet.getRow(1).font = { bold: true };
@@ -227,9 +228,9 @@ router.get('/template', async (req, res) => {
   worksheet.getRow(1).alignment = { horizontal: 'center', vertical: 'middle' };
 
   worksheet.addRows([
-    { questionType: 1, questionContent: 'The teacher asked us to _______ the new words after class.', correctAnswer: 'A. memorize', userAnswer: 'B. remember', taskId: '', wrongDate: '2026-04-18', explanation: 'memorize强调有意识地记忆，remember强调回忆起某事。' },
-    { questionType: 2, questionContent: '拼写单词：住宿', correctAnswer: 'accommodation', userAnswer: 'accomodation', taskId: '', wrongDate: '2026-04-17', explanation: '注意双c和双m' },
-    { questionType: 3, questionContent: 'The book _______ on the desk belongs to Mary.', correctAnswer: 'lying', userAnswer: 'laying', taskId: '', wrongDate: '2026-04-16', explanation: 'lie(躺)的现在分词是lying，lay(放置)的现在分词是laying。' }
+    { questionType: 3, taskName: '定语从句专项练习', errorDate: '2026-03-11 17:28', questionContent: 'I still remember the days _____ we spent together.', correctAnswer: 'which', wrongAnswer: 'ex sed', wrongCount: 1, mastered: 0 },
+    { questionType: 1, taskName: '词汇测试', errorDate: '2026-03-10 15:20', questionContent: "What is the antonym of 'beautiful'?", correctAnswer: 'C', wrongAnswer: 'A', wrongCount: 1, mastered: 0 },
+    { questionType: 2, taskName: '单词拼写练习', errorDate: '2026-03-09 10:00', questionContent: '拼写单词：苹果', correctAnswer: 'apple', wrongAnswer: 'appple', wrongCount: 1, mastered: 0 }
   ]);
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -400,31 +401,60 @@ router.post('/import', authMiddleware, upload.single('file'), async (req, res) =
     const importedData = [];
     let rowNum = 0;
 
+    // Excel 日期序列号转换为日期字符串
+    const excelDateToString = (excelDate) => {
+      if (!excelDate) return null;
+      // 如果是数字，说明是 Excel 日期序列号
+      if (typeof excelDate === 'number') {
+        // Excel 日期序列号从 1900-01-01 开始，需要减去 2 天修正 Excel 的闰年 bug
+        const date = new Date((excelDate - 25569) * 86400 * 1000);
+        return date.toISOString().split('T')[0];
+      }
+      // 如果已经是字符串，直接返回
+      if (typeof excelDate === 'string') {
+        // 尝试解析日期字符串
+        const date = new Date(excelDate);
+        if (!isNaN(date.getTime())) {
+          return date.toISOString().split('T')[0];
+        }
+        return null;
+      }
+      return null;
+    };
+
     worksheet.eachRow({ includeEmpty: false }, async (row, rowNumber) => {
       if (rowNumber === 1) return; // 跳过表头
       rowNum++;
 
       const values = row.values;
+      // Excel列顺序: 1.题目类型 2.任务名称 3.错误日期 4.题目内容 5.正确答案 6.学生答案 7.错误次数 8.是否已掌握
       const questionType = values[1];
-      const questionContent = values[2];
+      const taskName = values[2];
+      const errorDate = values[3];
+      const questionContent = values[4];
+      const correctAnswer = values[5];
+      const studentAnswer = values[6];
+      const wrongCount = values[7];
+      const mastered = values[8];
+
       if (!questionType || !questionContent) return;
 
       importedData.push([
         userId,                                    // user_id
-        values[5] || 0,                            // task_id (default to 0 if not provided)
-        values[8] || 0,                            // question_id (default to 0 if not provided)
-        null,                                      // class_id
+        0,                                         // task_id (default to 0, 任务名称仅作参考)
+        0,                                         // question_id (default to 0)
+        0,                                         // class_id (default to 0)
         String(questionType),                      // question_type
         questionContent,                           // question_content
-        values[3] || '',                           // correct_answer
-        values[4] || '',                           // student_answer
+        correctAnswer || '',                       // correct_answer
+        studentAnswer || '',                       // student_answer
         null,                                      // wrong_reason
-        1,                                         // wrong_count
-        values[6] || new Date().toISOString().split('T')[0], // last_wrong_time
-        '0',                                       // is_mastered
+        wrongCount || 1,                           // wrong_count
+        excelDateToString(errorDate) || new Date().toISOString().split('T')[0], // last_wrong_time
+        mastered === 1 || mastered === '1' ? '1' : '0', // is_mastered
         null,                                      // mastery_time
         null,                                      // tags
-        values[7] || '',                           // notes
+        '',                                        // notes
         new Date()                                 // create_time
       ]);
     });

@@ -265,24 +265,29 @@ router.get('/ranking', authMiddleware, async (req, res) => {
 
     const classId = memberRows[0].class_id;
 
-    // 获取班级排行榜
+    // 获取班级成员及其任务完成率
     const [rankRows] = await pool.query(
-      `SELECT cm.user_id, u.nick_name as name, cm.class_rank as \`rank\`,
-              cm.completed_tasks, cm.total_study_time
+      `SELECT 
+        cm.user_id, 
+        u.nick_name as name,
+        COUNT(st.task_id) as total_tasks,
+        SUM(CASE WHEN st.task_status = '2' THEN 1 ELSE 0 END) as completed_tasks
        FROM elia_class_member cm
        JOIN sys_user u ON cm.user_id = u.user_id
+       LEFT JOIN elia_student_task st ON cm.user_id = st.user_id AND cm.class_id = st.class_id
        WHERE cm.class_id = ? AND cm.member_status = '1'
-       ORDER BY cm.class_rank ASC
+       GROUP BY cm.user_id, u.nick_name
+       ORDER BY completed_tasks DESC, total_tasks DESC
        LIMIT 15`,
       [classId]
     );
 
     const data = rankRows.map((r, index) => ({
-      rank: r.rank || index + 1,
+      rank: index + 1,
       name: r.name,
       userId: r.user_id,
-      taskCompletionRate: r.completed_tasks || 0,
-      questionCount: r.total_study_time || 0,
+      taskCompletionRate: r.total_tasks > 0 ? Math.round((r.completed_tasks / r.total_tasks) * 100) : 0,
+      questionCount: r.completed_tasks || 0,
       isMe: r.user_id === userId
     }));
 
