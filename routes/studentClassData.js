@@ -219,7 +219,7 @@ router.get('/ranking', authMiddleware, async (req, res) => {
         u.nick_name as name,
         cm.total_study_time as studyTime,
         cm.mastery_words as masteredWords,
-        cm.class_rank as rank
+        cm.class_rank as \`rank\`
        FROM elia_class_member cm
        JOIN sys_user u ON cm.user_id = u.user_id
        WHERE cm.class_id = ? AND cm.member_status = '1'

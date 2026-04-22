@@ -406,23 +406,59 @@ router.get('/error/list', authMiddleware, async (req, res) => {
   const { startDate, endDate, questionType, classLevel, pageNum = 1, pageSize = 10 } = req.query;
 
   try {
-    let sql = `
-      SELECT w.*, t.task_name, c.class_level
-      FROM elia_wrong_question w
-      LEFT JOIN elia_task t ON w.task_id = t.task_id
-      LEFT JOIN elia_class c ON w.class_id = c.class_id
-      JOIN elia_class tc ON c.teacher_id = tc.teacher_id
-      WHERE tc.teacher_id = ?
-    `;
-    let countSql = `
-      SELECT COUNT(*) as total
-      FROM elia_wrong_question w
-      LEFT JOIN elia_class c ON w.class_id = c.class_id
-      JOIN elia_class tc ON c.teacher_id = tc.teacher_id
-      WHERE tc.teacher_id = ?
-    `;
-    const params = [userId];
-    const countParams = [userId];
+    // 获取教师创建的所有班级ID
+    const [classRows] = await pool.query(
+      'SELECT class_id FROM elia_class WHERE teacher_id = ? AND class_status = "1"',
+      [userId]
+    );
+    const teacherClassIds = classRows.map(r => r.class_id);
+
+    let sql = '';
+    let countSql = '';
+    const params = [];
+    const countParams = [];
+
+    if (teacherClassIds.length > 0) {
+      const classPlaceholders = teacherClassIds.map(() => '?').join(',');
+      
+      // 查询学生在自己班级的错题 + 教师自己上传的错题
+      sql = `
+        SELECT w.*, t.task_name, c.class_level, q.question_content as q_content
+        FROM elia_wrong_question w
+        LEFT JOIN elia_task t ON w.task_id = t.task_id
+        LEFT JOIN elia_class c ON w.class_id = c.class_id AND c.class_id > 0
+        LEFT JOIN elia_task_question q ON w.question_id = q.question_id
+        WHERE (w.class_id IN (${classPlaceholders}) OR w.user_id = ?)
+      `;
+      countSql = `
+        SELECT COUNT(*) as total
+        FROM elia_wrong_question w
+        WHERE (w.class_id IN (${classPlaceholders}) OR w.user_id = ?)
+      `;
+      
+      // 添加班级ID参数
+      params.push(...teacherClassIds);
+      params.push(userId);
+      countParams.push(...teacherClassIds);
+      countParams.push(userId);
+    } else {
+      // 没有班级，只显示教师自己上传的错题
+      sql = `
+        SELECT w.*, t.task_name, c.class_level, q.question_content as q_content
+        FROM elia_wrong_question w
+        LEFT JOIN elia_task t ON w.task_id = t.task_id
+        LEFT JOIN elia_class c ON w.class_id = c.class_id AND c.class_id > 0
+        LEFT JOIN elia_task_question q ON w.question_id = q.question_id
+        WHERE w.user_id = ?
+      `;
+      countSql = `
+        SELECT COUNT(*) as total
+        FROM elia_wrong_question w
+        WHERE w.user_id = ?
+      `;
+      params.push(userId);
+      countParams.push(userId);
+    }
 
     if (startDate) {
       sql += ' AND DATE(w.create_time) >= ?';
@@ -456,15 +492,15 @@ router.get('/error/list', authMiddleware, async (req, res) => {
     // 分页
     const offset = (parseInt(pageNum) - 1) * parseInt(pageSize);
     sql += ' ORDER BY w.create_time DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(pageSize), offset);
+    const listParams = [...params, parseInt(pageSize), offset];
 
-    const [rows] = await pool.query(sql, params);
+    const [rows] = await pool.query(sql, listParams);
 
     const typeMap = { '1': '选择题', '2': '单词拼写', '3': '填空题' };
     const list = rows.map(r => ({
       questionId: r.wrong_id,
       questionType: r.question_type,
-      questionContent: r.question_content,
+      questionContent: r.q_content || r.question_content || '',
       correctAnswer: r.correct_answer,
       wrongAnswer: r.student_answer,
       classLevel: r.class_level,
@@ -524,29 +560,48 @@ router.get('/error/template', authMiddleware, async (req, res) => {
  */
 router.get('/error/export', authMiddleware, async (req, res) => {
   const userId = getUserId(req);
-  const { format, scope, questionIds, startDate, endDate, questionType, classLevel } = req.query;
+  const { format, questionIds, startDate, endDate, questionType, classLevel } = req.query;
 
   if (!format || !['excel', 'pdf'].includes(format)) {
     return res.json({ code: 400, msg: '请指定导出格式（excel/pdf）' });
   }
 
   try {
-    let sql = `
-      SELECT w.*, t.task_name, c.class_level
-      FROM elia_wrong_question w
-      LEFT JOIN elia_task t ON w.task_id = t.task_id
-      LEFT JOIN elia_class c ON w.class_id = c.class_id
-      JOIN elia_class tc ON c.teacher_id = tc.teacher_id
-      WHERE tc.teacher_id = ?
-    `;
-    const params = [userId];
+    // 获取教师创建的所有班级ID
+    const [classRows] = await pool.query(
+      'SELECT class_id FROM elia_class WHERE teacher_id = ? AND class_status = "1"',
+      [userId]
+    );
+    const teacherClassIds = classRows.map(r => r.class_id);
 
-    if (scope === 'filtered') {
-      if (questionIds) {
-        const ids = questionIds.split(',').map(id => parseInt(id));
-        sql += ' AND w.wrong_id IN (?)';
-        params.push(ids);
-      }
+    let sql = '';
+    let params = [];
+
+    // 如果指定了questionIds，优先使用
+    if (questionIds) {
+      const ids = questionIds.split(',').map(id => parseInt(id));
+      sql = `
+        SELECT w.*, t.task_name, c.class_level, q.question_content as q_content
+        FROM elia_wrong_question w
+        LEFT JOIN elia_task t ON w.task_id = t.task_id
+        LEFT JOIN elia_class c ON w.class_id = c.class_id
+        LEFT JOIN elia_task_question q ON w.question_id = q.question_id
+        WHERE w.wrong_id IN (?)
+      `;
+      params = [ids];
+    } else if (teacherClassIds.length > 0) {
+      // 导出教师班级学生的错题 + 教师自己上传的错题
+      const classPlaceholders = teacherClassIds.map(() => '?').join(',');
+      sql = `
+        SELECT w.*, t.task_name, c.class_level, q.question_content as q_content
+        FROM elia_wrong_question w
+        LEFT JOIN elia_task t ON w.task_id = t.task_id
+        LEFT JOIN elia_class c ON w.class_id = c.class_id
+        LEFT JOIN elia_task_question q ON w.question_id = q.question_id
+        WHERE (w.class_id IN (${classPlaceholders}) OR w.user_id = ?)
+      `;
+      params = [...teacherClassIds, userId];
+
       if (startDate) {
         sql += ' AND DATE(w.create_time) >= ?';
         params.push(startDate);
@@ -562,6 +617,30 @@ router.get('/error/export', authMiddleware, async (req, res) => {
       if (classLevel) {
         sql += ' AND c.class_level = ?';
         params.push(classLevel);
+      }
+    } else {
+      // 没有班级，只导出教师自己上传的错题
+      sql = `
+        SELECT w.*, t.task_name, c.class_level, q.question_content as q_content
+        FROM elia_wrong_question w
+        LEFT JOIN elia_task t ON w.task_id = t.task_id
+        LEFT JOIN elia_class c ON w.class_id = c.class_id
+        LEFT JOIN elia_task_question q ON w.question_id = q.question_id
+        WHERE w.user_id = ?
+      `;
+      params = [userId];
+
+      if (startDate) {
+        sql += ' AND DATE(w.create_time) >= ?';
+        params.push(startDate);
+      }
+      if (endDate) {
+        sql += ' AND DATE(w.create_time) <= ?';
+        params.push(endDate);
+      }
+      if (questionType) {
+        sql += ' AND w.question_type = ?';
+        params.push(questionType);
       }
     }
 
@@ -598,7 +677,7 @@ router.get('/error/export', authMiddleware, async (req, res) => {
         worksheet.addRow({
           questionId: r.wrong_id,
           questionTypeName: typeMap[r.question_type] || r.question_type,
-          questionContent: r.question_content,
+          questionContent: r.q_content || r.question_content || '',
           correctAnswer: r.correct_answer,
           wrongAnswer: r.student_answer,
           classLevel: r.class_level,
@@ -652,7 +731,7 @@ router.get('/error/export', authMiddleware, async (req, res) => {
         const row = [
           String(item.wrong_id),
           typeMap[item.question_type] || item.question_type,
-          (item.question_content || '').substring(0, 20),
+          (item.q_content || item.question_content || '').substring(0, 20),
           item.correct_answer || '',
           item.student_answer || '',
           item.class_level || '',
@@ -684,6 +763,7 @@ router.get('/error/export', authMiddleware, async (req, res) => {
  */
 router.post('/error/import', authMiddleware, upload.single('file'), async (req, res) => {
   const { file } = req;
+  const userId = getUserId(req);
 
   if (!file) {
     return res.json({ code: 400, msg: '请上传文件' });
@@ -711,14 +791,56 @@ router.post('/error/import', authMiddleware, upload.single('file'), async (req, 
         correctAnswer: values[5] || '',
         wrongAnswer: values[6] || '',
         wrongCount: values[7] || 1,
-        mastered: values[8] === 1
+        mastered: values[8] === 1,
+        taskName: values[2] || '',
+        classLevel: values[3] || ''
       });
     });
 
+    // 插入到数据库
+    let successCount = 0;
+    for (const item of importedData) {
+      // 查找任务ID
+      let taskId = null;
+      if (item.taskName) {
+        const [taskRows] = await pool.query(
+          'SELECT task_id FROM elia_task WHERE task_name = ? LIMIT 1',
+          [item.taskName]
+        );
+        if (taskRows.length > 0) {
+          taskId = taskRows[0].task_id;
+        }
+      }
+
+      // 查找班级ID
+      let classId = 0;
+      if (item.classLevel) {
+        const [classRows] = await pool.query(
+          'SELECT class_id FROM elia_class WHERE class_level = ? AND teacher_id = ? LIMIT 1',
+          [item.classLevel, userId]
+        );
+        if (classRows.length > 0) {
+          classId = classRows[0].class_id;
+        }
+      }
+
+      // 插入错题记录
+      // 生成唯一的 question_id 和 task_id（使用时间戳+随机数）
+      const questionId = Date.now() + Math.floor(Math.random() * 1000);
+      const insertTaskId = taskId || (Date.now() + Math.floor(Math.random() * 1000));
+      await pool.query(
+        `INSERT INTO elia_wrong_question 
+         (user_id, task_id, question_id, class_id, question_type, question_content, correct_answer, student_answer, wrong_count, is_mastered, create_time)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [userId, insertTaskId, questionId, classId || 0, item.questionType, item.questionContent, item.correctAnswer, item.wrongAnswer, item.wrongCount, item.mastered ? '1' : '0']
+      );
+      successCount++;
+    }
+
     return res.json({
       code: 200,
-      msg: `成功导入 ${importedData.length} 条错题记录`,
-      data: { importCount: importedData.length }
+      msg: `成功导入 ${successCount} 条错题记录`,
+      data: { importCount: successCount }
     });
   } catch (error) {
     console.error('导入错误:', error);
@@ -762,10 +884,11 @@ router.get('/error/:questionId', authMiddleware, async (req, res) => {
 
   try {
     const [rows] = await pool.query(
-      `SELECT w.*, t.task_name, c.class_level
+      `SELECT w.*, t.task_name, c.class_level, q.question_content as q_content, q.options as q_options
        FROM elia_wrong_question w
        LEFT JOIN elia_task t ON w.task_id = t.task_id
        LEFT JOIN elia_class c ON w.class_id = c.class_id
+       LEFT JOIN elia_task_question q ON w.question_id = q.question_id
        WHERE w.wrong_id = ?`,
       [questionId]
     );
@@ -777,13 +900,28 @@ router.get('/error/:questionId', authMiddleware, async (req, res) => {
     const r = rows[0];
     const typeMap = { '1': '选择题', '2': '单词拼写', '3': '填空题' };
 
+    // 解析选项
+    let options = [];
+    if (r.q_options) {
+      try {
+        const optionsObj = JSON.parse(r.q_options);
+        options = Object.entries(optionsObj).map(([key, value]) => ({
+          key,
+          value
+        }));
+      } catch (e) {
+        options = [];
+      }
+    }
+
     return res.json({
       code: 200,
       data: {
         questionId: r.wrong_id,
         questionType: r.question_type,
         questionTypeName: typeMap[r.question_type] || r.question_type,
-        questionContent: r.question_content,
+        questionContent: r.q_content || r.question_content || '',
+        options: options,
         correctAnswer: r.correct_answer,
         wrongAnswer: r.student_answer,
         classLevel: r.class_level,

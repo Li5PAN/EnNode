@@ -104,9 +104,10 @@ router.get('/list', authMiddleware, async (req, res) => {
 
   try {
     let sql = `
-      SELECT w.*, t.task_name
+      SELECT w.*, t.task_name, q.question_content as q_content
       FROM elia_wrong_question w
       LEFT JOIN elia_task t ON w.task_id = t.task_id
+      LEFT JOIN elia_task_question q ON w.question_id = q.question_id
       WHERE w.user_id = ?
     `;
     let countSql = 'SELECT COUNT(*) as total FROM elia_wrong_question WHERE user_id = ?';
@@ -145,7 +146,7 @@ router.get('/list', authMiddleware, async (req, res) => {
 
     const list = rows.map(r => ({
       wrongId: r.wrong_id,
-      questionContent: r.question_content,
+      questionContent: r.q_content || r.question_content || '',
       questionType: r.question_type,
       questionTypeName: questionTypeMap[r.question_type] || r.question_type,
       correctAnswer: r.correct_answer,
@@ -252,9 +253,10 @@ router.get('/export', authMiddleware, async (req, res) => {
 
   try {
     let sql = `
-      SELECT w.*, t.task_name
+      SELECT w.*, t.task_name, q.question_content as q_content
       FROM elia_wrong_question w
       LEFT JOIN elia_task t ON w.task_id = t.task_id
+      LEFT JOIN elia_task_question q ON w.question_id = q.question_id
       WHERE w.user_id = ?
     `;
     const params = [userId];
@@ -308,7 +310,7 @@ router.get('/export', authMiddleware, async (req, res) => {
         worksheet.addRow({
           wrongId: r.wrong_id,
           questionTypeName: questionTypeMap[r.question_type] || r.question_type,
-          questionContent: r.question_content,
+          questionContent: r.q_content || r.question_content || '',
           correctAnswer: r.correct_answer,
           userAnswer: r.student_answer,
           taskName: r.task_name,
@@ -359,7 +361,7 @@ router.get('/export', authMiddleware, async (req, res) => {
         const row = [
           String(item.wrong_id),
           questionTypeMap[item.question_type] || item.question_type,
-          String(item.question_content || '').substring(0, 30),
+          String(item.q_content || item.question_content || '').substring(0, 30),
           String(item.correct_answer || '').substring(0, 15),
           String(item.student_answer || '').substring(0, 15),
           String(item.task_name || '').substring(0, 10),
@@ -409,8 +411,8 @@ router.post('/import', authMiddleware, upload.single('file'), async (req, res) =
 
       importedData.push([
         userId,                                    // user_id
-        values[5] || null,                         // task_id
-        null,                                      // question_id
+        values[5] || 0,                            // task_id (default to 0 if not provided)
+        values[8] || 0,                            // question_id (default to 0 if not provided)
         null,                                      // class_id
         String(questionType),                      // question_type
         questionContent,                           // question_content
@@ -422,7 +424,8 @@ router.post('/import', authMiddleware, upload.single('file'), async (req, res) =
         '0',                                       // is_mastered
         null,                                      // mastery_time
         null,                                      // tags
-        values[7] || ''                            // notes
+        values[7] || '',                           // notes
+        new Date()                                 // create_time
       ]);
     });
 
@@ -511,9 +514,10 @@ router.get('/:wrongId', authMiddleware, async (req, res) => {
 
   try {
     const [rows] = await pool.query(
-      `SELECT w.*, t.task_name
+      `SELECT w.*, t.task_name, q.question_content as q_content, q.options as q_options
        FROM elia_wrong_question w
        LEFT JOIN elia_task t ON w.task_id = t.task_id
+       LEFT JOIN elia_task_question q ON w.question_id = q.question_id
        WHERE w.wrong_id = ? AND w.user_id = ?`,
       [wrongId, userId]
     );
@@ -523,13 +527,29 @@ router.get('/:wrongId', authMiddleware, async (req, res) => {
     }
 
     const r = rows[0];
+
+    // 解析选项
+    let options = [];
+    if (r.q_options) {
+      try {
+        const optionsObj = JSON.parse(r.q_options);
+        options = Object.entries(optionsObj).map(([key, value]) => ({
+          key,
+          value
+        }));
+      } catch (e) {
+        options = [];
+      }
+    }
+
     return res.json({
       code: 200,
       data: {
         wrongId: r.wrong_id,
-        questionContent: r.question_content,
+        questionContent: r.q_content || r.question_content || '',
         questionType: r.question_type,
         questionTypeName: questionTypeMap[r.question_type] || r.question_type,
+        options: options,
         correctAnswer: r.correct_answer,
         userAnswer: r.student_answer,
         taskName: r.task_name,

@@ -53,15 +53,12 @@ router.get('/list', authMiddleware, async (req, res) => {
 
     const currentClassId = memberRows.length > 0 ? memberRows[0].class_id : null;
 
-    console.log('userId:', userId, 'currentClassId:', currentClassId);
-
     // 获取用户所有加入过的班级（包括当前班级和历史班级）
     const [allClassRows] = await pool.query(
       'SELECT class_id FROM elia_class_member WHERE user_id = ?',
       [userId]
     );
     const allClassIds = allClassRows.map(r => r.class_id);
-    console.log('allClassIds:', allClassIds);
 
     let sql = '';
     let countSql = '';
@@ -140,21 +137,15 @@ router.get('/list', authMiddleware, async (req, res) => {
     }
 
     // 获取总数
-    console.log('countSql:', countSql);
-    console.log('countParams:', countParams);
     const [countRows] = await pool.query(countSql, countParams);
     const total = countRows[0].total;
-    console.log('total count:', total);
 
     // 分页
     const offset = (parseInt(pageNum) - 1) * parseInt(pageSize);
     sql += ' LIMIT ? OFFSET ?';
     const finalParams = [...listParams, parseInt(pageSize), offset];
 
-    console.log('SQL:', sql);
-    console.log('Params:', finalParams);
     const [rows] = await pool.query(sql, finalParams);
-    console.log('query result rows:', rows);
 
     const list = rows.map(r => ({
       taskId: r.task_id,
@@ -371,10 +362,18 @@ router.post('/:taskId/submit', authMiddleware, async (req, res) => {
     // 批改答案
     let correctCount = 0;
     let totalScore = 0;
+    let answeredCount = 0;
     const wrongQuestions = [];
 
     for (const question of questionRows) {
       const userAnswer = answers[question.question_id];
+      
+      // 跳过未作答的题目
+      if (userAnswer === null || userAnswer === undefined || userAnswer === '') {
+        continue;
+      }
+      
+      answeredCount++;
       let isCorrect = false;
 
       if (question.question_type === '1') {
@@ -419,7 +418,8 @@ router.post('/:taskId/submit', authMiddleware, async (req, res) => {
 
     const totalQuestions = questionRows.length;
     const score = totalScore;
-    const isPassed = (correctCount / totalQuestions) >= 0.6; // 60%及格
+    // 只有已作答的题目才计入成绩，60%及格
+    const isPassed = answeredCount > 0 && (correctCount / answeredCount) >= 0.6;
 
     // 更新任务状态
     await pool.query(
@@ -428,17 +428,6 @@ router.post('/:taskId/submit', authMiddleware, async (req, res) => {
        WHERE task_id = ? AND user_id = ?`,
       [taskId, userId]
     );
-
-    // 保存用户答案到答案表
-    for (const [questionId, userAnswer] of Object.entries(answers)) {
-      const answerStr = Array.isArray(userAnswer) ? JSON.stringify(userAnswer) : (userAnswer || '');
-      await pool.query(
-        `INSERT INTO elia_task_answer (task_id, user_id, question_id, student_answer, create_time)
-         VALUES (?, ?, ?, ?, NOW())
-         ON DUPLICATE KEY UPDATE student_answer = ?, create_time = NOW()`,
-        [taskId, userId, parseInt(questionId), answerStr, answerStr]
-      );
-    }
 
     // 记录错题到错题表
     if (wrongQuestions.length > 0) {
@@ -487,6 +476,7 @@ router.post('/:taskId/submit', authMiddleware, async (req, res) => {
         correctCount,
         wrongCount: wrongQuestions.length,
         totalQuestions,
+        answeredCount,
         score,
         isPassed
       },
@@ -535,19 +525,14 @@ router.get('/:taskId/detail', authMiddleware, async (req, res) => {
       [taskId]
     );
 
-    // 获取用户提交的答案
-    const [answerRows] = await pool.query(
-      'SELECT question_id, student_answer FROM elia_task_answer WHERE task_id = ? AND user_id = ?',
+    // 用户答案从错题表获取
+    const answerMap = {};
+    const [wrongRows] = await pool.query(
+      'SELECT question_id, student_answer FROM elia_wrong_question WHERE task_id = ? AND user_id = ?',
       [taskId, userId]
     );
-
-    const answerMap = {};
-    answerRows.forEach(r => {
-      try {
-        answerMap[r.question_id] = JSON.parse(r.student_answer);
-      } catch (e) {
-        answerMap[r.question_id] = r.student_answer;
-      }
+    wrongRows.forEach(r => {
+      answerMap[r.question_id] = r.student_answer;
     });
 
     const questions = questionRows.map(q => {

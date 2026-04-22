@@ -292,166 +292,372 @@ router.post('/reject/:classId', authMiddleware, async (req, res) => {
 
 /**
  * GET /api/teacher-class/applications
- * 获取待审核的入班申请列表
+ * 获取待审核的申请列表（入班/退班/换班）
  */
 router.get('/applications', authMiddleware, async (req, res) => {
   const userId = getUserId(req);
-  const { status = '0', pageNum = 1, pageSize = 20 } = req.query;
+  const { status = '0', type, applicationType, pageNum = 1, pageSize = 20 } = req.query;
+  
+  // 兼容 applicationType 和 type 两种参数名
+  const filterType = type || applicationType;
 
   try {
-    const [rows] = await pool.query(
-      `SELECT a.*, c.class_name, u.nick_name as applicant_name, u.user_name as applicant_username
-       FROM elia_class_application a
-       JOIN elia_class c ON a.class_id = c.class_id
-       JOIN sys_user u ON a.applicant_id = u.user_id
-       WHERE c.teacher_id = ? AND a.application_type = '1' AND a.application_status = ?
-       ORDER BY a.create_time DESC
-       LIMIT ? OFFSET ?`,
-      [userId, status, parseInt(pageSize), (parseInt(pageNum) - 1) * parseInt(pageSize)]
-    );
+    // 查询与当前老师相关的申请
+    // 1. 入班申请：目标班级老师可见 (target_teacher_id)
+    // 2. 退班申请：源班级老师可见 (source_teacher_id)
+    // 3. 换班申请：源班级老师和目标班级老师都可见
+    let sql = `
+      SELECT a.*, 
+             c.class_name, c.class_level, 
+             u.nick_name as applicant_name, u.user_name as applicant_username,
+             tc.class_name as target_class_name
+      FROM elia_class_application a
+      JOIN elia_class c ON a.class_id = c.class_id
+      JOIN sys_user u ON a.applicant_id = u.user_id
+      LEFT JOIN elia_class tc ON a.class_id = tc.class_id
+      WHERE a.application_status = ?
+        AND (
+          -- 入班申请：目标班级老师
+          (a.application_type = '1' AND a.target_teacher_id = ?)
+          -- 退班申请：源班级老师
+          OR (a.application_type = '2' AND a.source_teacher_id = ?)
+          -- 换班申请：源班级老师或目标班级老师
+          OR (a.application_type = '3' AND (a.source_teacher_id = ? OR a.target_teacher_id = ?))
+        )
+    `;
+    
+    let countSql = `
+      SELECT COUNT(*) as total
+      FROM elia_class_application a
+      WHERE a.application_status = ?
+        AND (
+          (a.application_type = '1' AND a.target_teacher_id = ?)
+          OR (a.application_type = '2' AND a.source_teacher_id = ?)
+          OR (a.application_type = '3' AND (a.source_teacher_id = ? OR a.target_teacher_id = ?))
+        )
+    `;
+    
+    const params = [status, userId, userId, userId, userId];
+    const countParams = [status, userId, userId, userId, userId];
 
-    const [countResult] = await pool.query(
-      `SELECT COUNT(*) as total
-       FROM elia_class_application a
-       JOIN elia_class c ON a.class_id = c.class_id
-       WHERE c.teacher_id = ? AND a.application_type = '1' AND a.application_status = ?`,
-      [userId, status]
-    );
+    if (filterType) {
+      sql += ' AND a.application_type = ?';
+      countSql += ' AND a.application_type = ?';
+      params.push(filterType);
+      countParams.push(filterType);
+    }
+
+    sql += ' ORDER BY a.create_time DESC LIMIT ? OFFSET ?';
+    params.push(parseInt(pageSize), (parseInt(pageNum) - 1) * parseInt(pageSize));
+
+    const [rows] = await pool.query(sql, params);
+
+    const [countResult] = await pool.query(countSql, countParams);
+
+    const typeMap = { '1': '入班', '2': '退班', '3': '换班' };
+    const list = rows.map(r => ({
+      applicationId: r.application_id,
+      studentId: r.applicant_id,
+      studentName: r.applicant_name,
+      studentUsername: r.applicant_username,
+      applicationType: parseInt(r.application_type),
+      typeText: typeMap[r.application_type] || r.application_type,
+      targetClassId: r.class_id,
+      targetClassName: r.class_name,
+      targetClassLevel: r.class_level,
+      sourceClassId: r.source_class_id || null,
+      sourceClassName: null,
+      reason: r.application_reason,
+      status: parseInt(r.application_status),
+      sourceApproved: r.source_approved ? parseInt(r.source_approved) : null,
+      targetApproved: r.target_approved ? parseInt(r.target_approved) : null,
+      isFirstJoin: r.is_first_join === '1',
+      createTime: r.create_time
+    }));
 
     return res.json({
       code: 200,
-      data: {
-        list: rows,
-        total: countResult[0].total,
-        pageNum: parseInt(pageNum),
-        pageSize: parseInt(pageSize)
-      }
+      rows: list,
+      total: countResult[0].total,
+      pageNum: parseInt(pageNum),
+      pageSize: parseInt(pageSize)
     });
   } catch (error) {
-    console.error('获取入班申请列表错误:', error);
+    console.error('获取申请列表错误:', error);
     return res.status(500).json({ code: 500, message: '服务器错误' });
   }
 });
 
 /**
  * POST /api/teacher-class/applications/:applicationId/approve
- * 审核通过入班申请
+ * 审核通过申请（入班/退班/换班）
+ * @param {string} reason - 审核意见（可选）
  */
 router.post('/applications/:applicationId/approve', authMiddleware, async (req, res) => {
   const userId = getUserId(req);
   const applicationId = parseInt(req.params.applicationId);
+  const { reason } = req.body || {};
 
   try {
-    // 查找申请并验证权限
+    // 查找申请
     const [appRows] = await pool.query(
       `SELECT a.*, c.class_name, c.teacher_id
        FROM elia_class_application a
        JOIN elia_class c ON a.class_id = c.class_id
-       WHERE a.application_id = ? AND a.application_type = '1' AND a.application_status = '0'`,
+       WHERE a.application_id = ? AND a.application_status = '0'`,
       [applicationId]
     );
 
     if (appRows.length === 0) {
-      return res.json({ code: 404, msg: '入班申请不存在或已处理' });
-    }
-
-    if (appRows[0].teacher_id !== userId) {
-      return res.json({ code: 403, msg: '无权操作此申请' });
+      return res.json({ code: 404, msg: '申请不存在或已处理' });
     }
 
     const application = appRows[0];
-    const { class_id: classId, applicant_id: applicantId } = application;
+    const { class_id: classId, applicant_id: applicantId, application_type: appType, 
+            source_teacher_id, target_teacher_id, source_approved, target_approved } = application;
 
-    // 检查学生是否已在该班级（任何状态）
-    const [memberRows] = await pool.query(
-      'SELECT * FROM elia_class_member WHERE class_id = ? AND user_id = ?',
-      [classId, applicantId]
-    );
-
-    if (memberRows.length > 0) {
-      if (memberRows[0].member_status === '1') {
-        // 拒绝申请
-        await pool.query(
-          'UPDATE elia_class_application SET application_status = "2", update_time = NOW() WHERE application_id = ?',
-          [applicationId]
-        );
-        return res.json({ code: 400, msg: '该学生已在班级中' });
-      }
-      // 如果是已离开的成员，重新激活
-      await pool.query(
-        'UPDATE elia_class_member SET member_status = "1", join_time = NOW() WHERE class_id = ? AND user_id = ?',
-        [classId, applicantId]
-      );
-    } else {
-      // 添加学生到班级
-      await pool.query(
-        `INSERT INTO elia_class_member (class_id, user_id, join_time, member_status, completed_tasks, total_study_time, create_time)
-         VALUES (?, ?, NOW(), '1', 0, 0, NOW())`,
-        [classId, applicantId]
-      );
+    // 判断当前老师是源班级老师还是目标班级老师
+    const isSourceTeacher = source_teacher_id == userId;
+    const isTargetTeacher = target_teacher_id == userId;
+    
+    // 对于入班申请，只有目标班级老师可以审核
+    // 对于退班申请，只有源班级老师可以审核
+    // 对于换班申请，双方老师都可以审核
+    if (appType === '1' && !isTargetTeacher) {
+      return res.json({ code: 403, msg: '您无权审核此入班申请' });
+    }
+    if (appType === '2' && !isSourceTeacher) {
+      return res.json({ code: 403, msg: '您无权审核此退班申请' });
+    }
+    if (appType === '3' && !isSourceTeacher && !isTargetTeacher) {
+      return res.json({ code: 403, msg: '您无权审核此换班申请' });
     }
 
-    // 更新班级人数
-    await pool.query(
-      'UPDATE elia_class SET current_students = current_students + 1 WHERE class_id = ?',
-      [classId]
-    );
+    // 根据申请类型和老师角色处理
+    if (appType === '1') {
+      // 入班申请 - 目标班级老师审核
+      // 检查学生是否已在该班级（任何状态）
+      const [memberRows] = await pool.query(
+        'SELECT * FROM elia_class_member WHERE class_id = ? AND user_id = ?',
+        [classId, applicantId]
+      );
 
-    // 更新用户当前班级
-    await pool.query(
-      'UPDATE sys_user SET current_class_id = ?, join_class_time = NOW() WHERE user_id = ?',
-      [classId, applicantId]
-    );
+      if (memberRows.length > 0) {
+        if (memberRows[0].member_status === '1') {
+          await pool.query(
+            'UPDATE elia_class_application SET application_status = "2", update_time = NOW() WHERE application_id = ?',
+            [applicationId]
+          );
+          return res.json({ code: 400, msg: '该学生已在班级中' });
+        }
+        // 重新激活
+        await pool.query(
+          'UPDATE elia_class_member SET member_status = "1", join_time = NOW() WHERE class_id = ? AND user_id = ?',
+          [classId, applicantId]
+        );
+      } else {
+        // 添加学生到班级
+        await pool.query(
+          `INSERT INTO elia_class_member (class_id, user_id, join_time, member_status, completed_tasks, total_study_time, create_time)
+           VALUES (?, ?, NOW(), '1', 0, 0, NOW())`,
+          [classId, applicantId]
+        );
+      }
 
-    // 更新申请状态为通过
-    await pool.query(
-      'UPDATE elia_class_application SET application_status = "1", update_time = NOW() WHERE application_id = ?',
-      [applicationId]
-    );
+      // 更新班级人数
+      await pool.query(
+        'UPDATE elia_class SET current_students = current_students + 1 WHERE class_id = ?',
+        [classId]
+      );
 
-    return res.json({ code: 200, msg: '已通过入班申请' });
+      // 更新用户当前班级
+      await pool.query(
+        'UPDATE sys_user SET current_class_id = ?, join_class_time = NOW() WHERE user_id = ?',
+        [classId, applicantId]
+      );
+
+      // 更新申请状态为通过
+      await pool.query(
+        'UPDATE elia_class_application SET target_approved = "1", target_approved_time = NOW(), target_approved_by = ?, application_status = "1", update_time = NOW() WHERE application_id = ?',
+        [userId, applicationId]
+      );
+
+    } else if (appType === '2') {
+      // 退班申请 - 源班级老师审核
+      // 更新成员状态
+      await pool.query(
+        'UPDATE elia_class_member SET member_status = "0", leave_time = NOW() WHERE class_id = ? AND user_id = ?',
+        [classId, applicantId]
+      );
+
+      // 更新班级人数
+      await pool.query(
+        'UPDATE elia_class SET current_students = current_students - 1 WHERE class_id = ?',
+        [classId]
+      );
+
+      // 更新用户当前班级
+      await pool.query(
+        'UPDATE sys_user SET current_class_id = NULL WHERE user_id = ?',
+        [applicantId]
+      );
+
+      // 更新申请状态为通过
+      await pool.query(
+        'UPDATE elia_class_application SET source_approved = "1", source_approved_time = NOW(), source_approved_by = ?, application_status = "1", update_time = NOW() WHERE application_id = ?',
+        [userId, applicationId]
+      );
+
+    } else if (appType === '3') {
+      // 换班申请 - 需要两个老师都审核通过
+      let updateFields = '';
+      let params = [];
+      
+      if (isSourceTeacher) {
+        updateFields = 'source_approved = "1", source_approved_time = NOW(), source_approved_by = ?';
+        params.push(userId);
+      } else if (isTargetTeacher) {
+        updateFields = 'target_approved = "1", target_approved_time = NOW(), target_approved_by = ?';
+        params.push(userId);
+      }
+      
+      // 先更新当前老师的审核状态
+      await pool.query(
+        `UPDATE elia_class_application SET ${updateFields}, update_time = NOW() WHERE application_id = ?`,
+        [...params, applicationId]
+      );
+
+      // 重新查询获取最新状态
+      const [updatedRows] = await pool.query(
+        'SELECT * FROM elia_class_application WHERE application_id = ?',
+        [applicationId]
+      );
+
+      const updatedApp = updatedRows[0];
+      
+      // 检查是否双方都通过了
+      if (updatedApp.source_approved === '1' && updatedApp.target_approved === '1') {
+        // 双方都通过，执行换班
+        // 从 class_id 字段获取源班级（退班/换班申请中 class_id 存储的是源班级）
+        const sourceClassId = classId;
+        
+        // 离开源班级
+        await pool.query(
+          'UPDATE elia_class_member SET member_status = "0", leave_time = NOW() WHERE class_id = ? AND user_id = ?',
+          [sourceClassId, applicantId]
+        );
+        await pool.query(
+          'UPDATE elia_class SET current_students = current_students - 1 WHERE class_id = ?',
+          [sourceClassId]
+        );
+
+        // 加入目标班级
+        await pool.query(
+          `INSERT INTO elia_class_member (class_id, user_id, join_time, member_status, completed_tasks, total_study_time, create_time)
+           VALUES (?, ?, NOW(), '1', 0, 0, NOW())`,
+          [classId, applicantId]
+        );
+        await pool.query(
+          'UPDATE elia_class SET current_students = current_students + 1 WHERE class_id = ?',
+          [classId]
+        );
+
+        // 更新用户当前班级
+        await pool.query(
+          'UPDATE sys_user SET current_class_id = ? WHERE user_id = ?',
+          [classId, applicantId]
+        );
+
+        // 更新申请状态为完成
+        await pool.query(
+          'UPDATE elia_class_application SET application_status = "1", update_time = NOW() WHERE application_id = ?',
+          [applicationId]
+        );
+
+        return res.json({ code: 200, msg: '换班申请已通过，学生已成功换班' });
+      } else {
+        // 等待另一个老师审核
+        let waitingMsg = '';
+        if (isSourceTeacher) {
+          waitingMsg = '已通过换班申请，等待目标班级老师审核';
+        } else {
+          waitingMsg = '已通过换班申请，等待当前班级老师审核';
+        }
+        return res.json({ code: 200, msg: waitingMsg });
+      }
+    }
+
+    const typeMap = { '1': '入班', '2': '退班', '3': '换班' };
+    return res.json({ code: 200, msg: `已通过${typeMap[appType]}申请` });
   } catch (error) {
-    console.error('审核通过入班申请错误:', error);
+    console.error('审核通过申请错误:', error);
     return res.status(500).json({ code: 500, message: '服务器错误' });
   }
 });
 
 /**
  * POST /api/teacher-class/applications/:applicationId/reject
- * 拒绝入班申请
+ * 拒绝申请（入班/退班/换班）
+ * @param {string} reason - 拒绝理由（必填）
  */
 router.post('/applications/:applicationId/reject', authMiddleware, async (req, res) => {
   const userId = getUserId(req);
   const applicationId = parseInt(req.params.applicationId);
   const { reason } = req.body;
 
+  if (!reason || reason.trim() === '') {
+    return res.json({ code: 400, msg: '请填写拒绝理由' });
+  }
+
   try {
-    // 查找申请并验证权限
+    // 查找申请
     const [appRows] = await pool.query(
       `SELECT a.*, c.teacher_id
        FROM elia_class_application a
        JOIN elia_class c ON a.class_id = c.class_id
-       WHERE a.application_id = ? AND a.application_type = '1' AND a.application_status = '0'`,
+       WHERE a.application_id = ? AND a.application_status = '0'`,
       [applicationId]
     );
 
     if (appRows.length === 0) {
-      return res.json({ code: 404, msg: '入班申请不存在或已处理' });
+      return res.json({ code: 404, msg: '申请不存在或已处理' });
     }
 
-    if (appRows[0].teacher_id !== userId) {
-      return res.json({ code: 403, msg: '无权操作此申请' });
+    const application = appRows[0];
+    const { application_type: appType, source_teacher_id, target_teacher_id } = application;
+
+    // 判断当前老师是源班级老师还是目标班级老师
+    const isSourceTeacher = source_teacher_id == userId;
+    const isTargetTeacher = target_teacher_id == userId;
+    
+    // 权限检查
+    if (appType === '1' && !isTargetTeacher) {
+      return res.json({ code: 403, msg: '您无权审核此入班申请' });
+    }
+    if (appType === '2' && !isSourceTeacher) {
+      return res.json({ code: 403, msg: '您无权审核此退班申请' });
+    }
+    if (appType === '3' && !isSourceTeacher && !isTargetTeacher) {
+      return res.json({ code: 403, msg: '您无权审核此换班申请' });
     }
 
-    // 更新申请状态为拒绝
-    await pool.query(
-      'UPDATE elia_class_application SET application_status = "2", update_time = NOW() WHERE application_id = ?',
-      [applicationId]
-    );
+    // 更新申请状态为拒绝，同时记录拒绝的老师
+    if (isSourceTeacher) {
+      await pool.query(
+        'UPDATE elia_class_application SET source_approved = "2", source_approved_time = NOW(), source_approved_by = ?, application_status = "2", audit_remark = ?, update_time = NOW() WHERE application_id = ?',
+        [userId, reason, applicationId]
+      );
+    } else if (isTargetTeacher) {
+      await pool.query(
+        'UPDATE elia_class_application SET target_approved = "2", target_approved_time = NOW(), target_approved_by = ?, application_status = "2", audit_remark = ?, update_time = NOW() WHERE application_id = ?',
+        [userId, reason, applicationId]
+      );
+    }
 
-    return res.json({ code: 200, msg: '已拒绝入班申请' });
+    const typeMap = { '1': '入班', '2': '退班', '3': '换班' };
+    return res.json({ code: 200, msg: `已拒绝${typeMap[appType]}申请` });
   } catch (error) {
-    console.error('拒绝入班申请错误:', error);
+    console.error('拒绝申请错误:', error);
     return res.status(500).json({ code: 500, message: '服务器错误' });
   }
 });

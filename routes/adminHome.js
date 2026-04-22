@@ -376,17 +376,35 @@ router.get('/class-review/management-list', authMiddleware, async (req, res) => 
 /**
  * POST /api/admin-home/class-review/approve/:classId
  * 审核通过班级
+ * @param {number} classId - 班级ID（路径参数）
+ * @param {object} body - 请求体
+ * @param {string} [body.reason] - 审核原因（可选）
  */
 router.post('/class-review/approve/:classId', authMiddleware, async (req, res) => {
   const classId = parseInt(req.params.classId);
+  const { reason } = req.body || {};
 
   try {
-    const [result] = await pool.query(
-      'UPDATE elia_class SET class_status = "1" WHERE class_id = ? AND class_status = "0"',
+    // If reason provided, store it; otherwise just approve
+    if (reason) {
+      await pool.query(
+        'UPDATE elia_class SET class_status = "1", audit_reason = ? WHERE class_id = ? AND class_status = "0"',
+        [reason, classId]
+      );
+    } else {
+      await pool.query(
+        'UPDATE elia_class SET class_status = "1" WHERE class_id = ? AND class_status = "0"',
+        [classId]
+      );
+    }
+
+    // Check if update was successful
+    const [checkResult] = await pool.query(
+      'SELECT class_id FROM elia_class WHERE class_id = ? AND class_status = "1"',
       [classId]
     );
 
-    if (result.affectedRows === 0) {
+    if (checkResult.length === 0) {
       return res.json({ code: 404, msg: '待审核班级不存在' });
     }
 
@@ -400,14 +418,22 @@ router.post('/class-review/approve/:classId', authMiddleware, async (req, res) =
 /**
  * POST /api/admin-home/class-review/reject/:classId
  * 拒绝班级
+ * @param {number} classId - 班级ID（路径参数）
+ * @param {object} body - 请求体
+ * @param {string} body.reason - 拒绝原因（必填）
  */
 router.post('/class-review/reject/:classId', authMiddleware, async (req, res) => {
   const classId = parseInt(req.params.classId);
+  const { reason } = req.body || {};
+
+  if (!reason) {
+    return res.json({ code: 400, msg: '请填写拒绝原因' });
+  }
 
   try {
     const [result] = await pool.query(
-      'DELETE FROM elia_class WHERE class_id = ? AND class_status = "0"',
-      [classId]
+      'UPDATE elia_class SET class_status = "2", audit_reason = ? WHERE class_id = ? AND class_status = "0"',
+      [reason, classId]
     );
 
     if (result.affectedRows === 0) {
