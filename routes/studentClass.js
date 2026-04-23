@@ -193,33 +193,53 @@ router.get('/my-class', authMiddleware, async (req, res) => {
       [member.teacher_id]
     );
 
-    // 获取班级排名
+    // 获取班级排名（根据任务完成数排名）
     const [rankRows] = await pool.query(
-      `SELECT user_id, class_rank FROM elia_class_member 
-       WHERE class_id = ? AND member_status = '1' 
-       ORDER BY class_rank ASC`,
+      `SELECT cm.user_id, 
+              (SELECT COUNT(*) FROM elia_student_task st 
+               WHERE st.user_id = cm.user_id AND st.class_id = cm.class_id AND st.task_status = '2') as completed_count
+       FROM elia_class_member cm
+       WHERE cm.class_id = ? AND cm.member_status = '1'
+       ORDER BY completed_count DESC`,
       [member.class_id]
     );
-    const myRank = rankRows.find(r => r.user_id === userId)?.class_rank || 0;
+    
+    // 计算当前用户的排名
+    let myRank = 1;
+    for (let i = 0; i < rankRows.length; i++) {
+      if (rankRows[i].user_id === userId) {
+        myRank = i + 1;
+        break;
+      }
+    }
 
-    // 获取任务完成情况
+    // 班级任务总数（使用老师设置的任务要求数量）
+    const classTaskTotal = member.task_requirement || 0;
+
+    // 获取学生已完成的任务数（当前班级）
     const [taskRows] = await pool.query(
-      `SELECT COUNT(*) as total, SUM(CASE WHEN task_status = '2' THEN 1 ELSE 0 END) as completed
-       FROM elia_student_task WHERE user_id = ? AND class_id = ?`,
+      `SELECT COUNT(*) as completed
+       FROM elia_student_task WHERE user_id = ? AND class_id = ? AND task_status = '2'`,
       [userId, member.class_id]
     );
-
-    const totalTasks = taskRows[0].total || 0;
     const completedTasks = taskRows[0].completed || 0;
-    const myTaskCompletionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-    // 获取班级平均完成率
+    // 我的任务完成率 = 已完成任务数 / 班级任务总数
+    const myTaskCompletionRate = classTaskTotal > 0 ? Math.min(100, Math.round((completedTasks / classTaskTotal) * 100)) : 0;
+
+    // 获取班级平均完成率（每个成员的完成率平均值，上限100%）
+    // 完成率 = 该成员已完成任务数 / 班级任务总数
     const [classTaskRows] = await pool.query(
-      `SELECT AVG(CASE WHEN st.task_status = '2' THEN 100 ELSE 0 END) as avg_rate
+      `SELECT AVG(
+        CASE WHEN ? > 0 
+          THEN LEAST(100, (SELECT COUNT(*) FROM elia_student_task st2 
+                WHERE st2.user_id = cm.user_id AND st2.class_id = cm.class_id AND st2.task_status = '2') * 100.0 / ?)
+          ELSE 0 
+        END
+      ) as avg_rate
        FROM elia_class_member cm
-       LEFT JOIN elia_student_task st ON cm.user_id = st.user_id AND cm.class_id = st.class_id
        WHERE cm.class_id = ? AND cm.member_status = '1'`,
-      [member.class_id]
+      [classTaskTotal, classTaskTotal, member.class_id]
     );
     const classTaskCompletionRate = Math.round(classTaskRows[0].avg_rate || 0);
 
@@ -231,7 +251,7 @@ router.get('/my-class', authMiddleware, async (req, res) => {
         classLevel: member.class_level,
         teacherName: teacherRows[0]?.nick_name || '',
         memberCount: member.current_students || 0,
-        totalTasks: member.task_requirement || 0,
+        totalTasks: classTaskTotal,
         myRank,
         classTaskCompletionRate,
         myTaskCompletionRate,
@@ -265,19 +285,24 @@ router.get('/ranking', authMiddleware, async (req, res) => {
 
     const classId = memberRows[0].class_id;
 
-    // 获取班级成员及其任务完成率
+    // 获取班级任务总数
+    const [classRows] = await pool.query(
+      'SELECT task_requirement FROM elia_class WHERE class_id = ?',
+      [classId]
+    );
+    const classTaskTotal = classRows[0]?.task_requirement || 0;
+
+    // 获取班级成员及其任务完成情况
     const [rankRows] = await pool.query(
       `SELECT 
         cm.user_id, 
         u.nick_name as name,
-        COUNT(st.task_id) as total_tasks,
-        SUM(CASE WHEN st.task_status = '2' THEN 1 ELSE 0 END) as completed_tasks
+        (SELECT COUNT(*) FROM elia_student_task st2 
+         WHERE st2.user_id = cm.user_id AND st2.class_id = cm.class_id AND st2.task_status = '2') as completed_tasks
        FROM elia_class_member cm
        JOIN sys_user u ON cm.user_id = u.user_id
-       LEFT JOIN elia_student_task st ON cm.user_id = st.user_id AND cm.class_id = st.class_id
        WHERE cm.class_id = ? AND cm.member_status = '1'
-       GROUP BY cm.user_id, u.nick_name
-       ORDER BY completed_tasks DESC, total_tasks DESC
+       ORDER BY completed_tasks DESC
        LIMIT 15`,
       [classId]
     );
@@ -286,7 +311,7 @@ router.get('/ranking', authMiddleware, async (req, res) => {
       rank: index + 1,
       name: r.name,
       userId: r.user_id,
-      taskCompletionRate: r.total_tasks > 0 ? Math.round((r.completed_tasks / r.total_tasks) * 100) : 0,
+      taskCompletionRate: classTaskTotal > 0 ? Math.round((r.completed_tasks / classTaskTotal) * 100) : 0,
       questionCount: r.completed_tasks || 0,
       isMe: r.user_id === userId
     }));
@@ -579,14 +604,24 @@ router.post('/change', authMiddleware, async (req, res) => {
 
     const currentMember = memberRows[0];
 
-    // 检查任务完成率
+    // 检查任务完成率（使用班级任务总数作为分母）
+    // 获取班级任务总数
+    const [classTaskRows] = await pool.query(
+      'SELECT task_requirement FROM elia_class WHERE class_id = ?',
+      [currentMember.class_id]
+    );
+    const classTaskTotal = classTaskRows[0]?.task_requirement || 0;
+
+    // 获取学生已完成的任务数
     const [taskRows] = await pool.query(
-      `SELECT COUNT(*) as total, SUM(CASE WHEN task_status = '2' THEN 1 ELSE 0 END) as completed
-       FROM elia_student_task WHERE user_id = ? AND class_id = ?`,
+      `SELECT COUNT(*) as completed
+       FROM elia_student_task WHERE user_id = ? AND class_id = ? AND task_status = '2'`,
       [userId, currentMember.class_id]
     );
+    const completedTasks = taskRows[0].completed || 0;
 
-    const completionRate = taskRows[0].total > 0 ? Math.round((taskRows[0].completed / taskRows[0].total) * 100) : 0;
+    // 完成率 = 已完成任务数 / 班级任务总数，上限100%
+    const completionRate = classTaskTotal > 0 ? Math.min(100, Math.round((completedTasks / classTaskTotal) * 100)) : 0;
     if (completionRate < 100) {
       return res.json({ code: 400, msg: `您当前的任务完成率为${completionRate}%，需要完成100%的班级任务才能申请换班` });
     }

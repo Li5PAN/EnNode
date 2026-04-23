@@ -433,6 +433,7 @@ router.get('/error/list', authMiddleware, async (req, res) => {
       countSql = `
         SELECT COUNT(*) as total
         FROM elia_wrong_question w
+        LEFT JOIN elia_class c ON w.class_id = c.class_id AND c.class_id > 0
         WHERE (w.class_id IN (${classPlaceholders}) OR w.user_id = ?)
       `;
       
@@ -454,6 +455,7 @@ router.get('/error/list', authMiddleware, async (req, res) => {
       countSql = `
         SELECT COUNT(*) as total
         FROM elia_wrong_question w
+        LEFT JOIN elia_class c ON w.class_id = c.class_id AND c.class_id > 0
         WHERE w.user_id = ?
       `;
       params.push(userId);
@@ -728,6 +730,16 @@ router.get('/error/export', authMiddleware, async (req, res) => {
 
       rows.forEach(item => {
         x = 30;
+        // 处理 create_time，可能是 Date 对象或字符串
+        let createTimeStr = '';
+        if (item.create_time) {
+          if (typeof item.create_time === 'string') {
+            createTimeStr = item.create_time.substring(0, 10);
+          } else if (item.create_time instanceof Date) {
+            createTimeStr = item.create_time.toISOString().substring(0, 10);
+          }
+        }
+        
         const row = [
           String(item.wrong_id),
           typeMap[item.question_type] || item.question_type,
@@ -737,7 +749,7 @@ router.get('/error/export', authMiddleware, async (req, res) => {
           item.class_level || '',
           String(item.wrong_count),
           (item.task_name || '').substring(0, 10),
-          (item.create_time || '').substring(0, 10),
+          createTimeStr,
           item.is_mastered === '1' ? '已掌握' : '未掌握'
         ];
 
@@ -750,10 +762,15 @@ router.get('/error/export', authMiddleware, async (req, res) => {
       });
 
       doc.end();
+    } else {
+      return res.json({ code: 400, msg: '不支持的导出格式' });
     }
   } catch (error) {
     console.error('导出错题错误:', error);
-    return res.status(500).json({ code: 500, message: '服务器错误' });
+    // 如果响应头还未发送，则返回错误
+    if (!res.headersSent) {
+      return res.status(500).json({ code: 500, message: '服务器错误' });
+    }
   }
 });
 
@@ -958,6 +975,60 @@ router.delete('/error/:questionId', authMiddleware, async (req, res) => {
     return res.json({ code: 200, msg: '删除成功' });
   } catch (error) {
     console.error('删除错题错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
+});
+
+/**
+ * GET /api/teacher-home/class-approval-notifications
+ * 获取班级审批通知（老师创建班级的审批结果）
+ */
+router.get('/class-approval-notifications', authMiddleware, async (req, res) => {
+  const userId = getUserId(req);
+
+  try {
+    // 查询老师创建的班级及其审批状态
+    // class_status: '0'=待审核, '1'=已通过, '2'=已拒绝
+    // audit_reason: 审批原因
+    const [rows] = await pool.query(
+      `SELECT class_id, class_name, class_status, audit_reason, create_time
+       FROM elia_class
+       WHERE teacher_id = ?
+       ORDER BY create_time DESC
+       LIMIT 20`,
+      [userId]
+    );
+
+    const data = rows.map(r => {
+      let status = 'pending';
+      let reason = '';
+
+      if (r.class_status === '1') {
+        status = 'approved';
+        reason = r.audit_reason || '班级创建申请已通过';
+      } else if (r.class_status === '2') {
+        status = 'rejected';
+        reason = r.audit_reason || '班级创建申请未通过';
+      } else {
+        status = 'pending';
+        reason = '';
+      }
+
+      return {
+        classId: r.class_id,
+        className: r.class_name,
+        status,
+        reason,
+        createTime: r.create_time
+      };
+    });
+
+    return res.json({
+      code: 200,
+      data
+    });
+  } catch (error) {
+    console.error('获取班级审批通知错误:', error);
     return res.status(500).json({ code: 500, message: '服务器错误' });
   }
 });

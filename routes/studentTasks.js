@@ -380,7 +380,9 @@ router.post('/:taskId/submit', authMiddleware, async (req, res) => {
         // 单选题
         try {
           const correctArr = question.correct_answer ? JSON.parse(question.correct_answer) : [];
-          isCorrect = correctArr.includes(userAnswer);
+          // 用户答案可能是数组格式 ["A"] 或字符串 "A"
+          const userAnswerStr = Array.isArray(userAnswer) ? userAnswer[0] : userAnswer;
+          isCorrect = correctArr.includes(userAnswerStr);
         } catch (e) {
           isCorrect = false;
         }
@@ -404,12 +406,20 @@ router.post('/:taskId/submit', authMiddleware, async (req, res) => {
         totalScore += parseInt(question.score) || 0;
       } else {
         // 记录错题
+        // 将用户答案转换为字符串存储
+        let userAnswerStr = '';
+        if (Array.isArray(userAnswer)) {
+          userAnswerStr = userAnswer.join(',');
+        } else if (userAnswer !== null && userAnswer !== undefined) {
+          userAnswerStr = String(userAnswer);
+        }
+        
         wrongQuestions.push({
           questionId: question.question_id,
           questionType: question.question_type,
           questionContent: question.question_content,
           correctAnswer: question.correct_answer,
-          userAnswer: userAnswer || '',
+          userAnswer: userAnswerStr,
           taskId: taskId,
           classId: task.class_id
         });

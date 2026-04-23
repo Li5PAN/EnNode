@@ -123,7 +123,7 @@ router.get('/daily-study', authMiddleware, async (req, res) => {
 
 /**
  * GET /api/student-class-data/compare
- * 获取班级 vs 个人完成率走势（近8周）
+ * 获取班级 vs 个人单词掌握走势（近7天）
  */
 router.get('/compare', authMiddleware, async (req, res) => {
   const userId = getUserId(req);
@@ -148,30 +148,51 @@ router.get('/compare', authMiddleware, async (req, res) => {
 
     const classId = memberRows[0].class_id;
 
-    // 获取近8周的数据
+    // 获取班级任务总数（用于计算完成率）
+    const [classRows] = await pool.query(
+      'SELECT task_requirement FROM elia_class WHERE class_id = ?',
+      [classId]
+    );
+    const classTaskTotal = classRows[0]?.task_requirement || 1;
+
+    // 获取近7天的学习记录
     const [rows] = await pool.query(
       `SELECT 
-        YEARWEEK(record_date, 1) as week,
-        AVG(CASE WHEN st.task_status = '2' THEN 100 ELSE 0 END) as class_rate,
-        MAX(CASE WHEN lr.user_id = ? THEN (SELECT COUNT(*) FROM elia_student_task WHERE user_id = ? AND task_status = '2') ELSE 0 END) as my_rate
-       FROM elia_learning_record lr
-       LEFT JOIN elia_class_member cm ON lr.user_id = cm.user_id AND lr.class_id = cm.class_id
-       LEFT JOIN elia_student_task st ON cm.user_id = st.user_id
-       WHERE lr.class_id = ? AND lr.record_date >= DATE_SUB(CURDATE(), INTERVAL 8 WEEK)
-       GROUP BY YEARWEEK(record_date, 1)
-       ORDER BY week ASC`,
-      [userId, userId, classId]
+        record_date,
+        SUM(words_mastered) as total_mastered,
+        SUM(CASE WHEN user_id = ? THEN words_mastered ELSE 0 END) as my_mastered
+       FROM elia_learning_record 
+       WHERE class_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+       GROUP BY record_date
+       ORDER BY record_date ASC`,
+      [userId, classId]
     );
 
+    // 获取班级成员数
+    const [memberCountRows] = await pool.query(
+      'SELECT COUNT(*) as total FROM elia_class_member WHERE class_id = ? AND member_status = "1"',
+      [classId]
+    );
+    const memberCount = memberCountRows[0]?.total || 1;
+
+    // 填充缺失的日期
     const weeks = [];
     const classRate = [];
     const myRate = [];
 
-    rows.forEach((r, i) => {
-      weeks.push(`第${i + 1}周`);
-      classRate.push(Math.round(r.class_rate || 0));
-      myRate.push(Math.round(r.my_rate || 0));
-    });
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+      
+      const record = rows.find(r => r.record_date.toISOString().split('T')[0] === dateStr);
+      
+      weeks.push(`第${7 - i}天`);
+      // 班级平均掌握单词数
+      classRate.push(record ? Math.round((record.total_mastered || 0) / memberCount) : 0);
+      // 我的掌握单词数
+      myRate.push(record?.my_mastered || 0);
+    }
 
     return res.json({
       code: 200,
@@ -207,23 +228,17 @@ router.get('/ranking', authMiddleware, async (req, res) => {
 
     const classId = memberRows[0].class_id;
 
-    // 获取班级成员排名
-    let orderBy = 'cm.total_study_time DESC';
-    if (type === 'words') {
-      orderBy = 'cm.mastery_words DESC';
-    }
-
+    // 获取班级成员及其已掌握单词数（从 elia_user_word_record 表统计）
     const [rows] = await pool.query(
       `SELECT 
         cm.user_id,
         u.nick_name as name,
         cm.total_study_time as studyTime,
-        cm.mastery_words as masteredWords,
-        cm.class_rank as \`rank\`
+        (SELECT COUNT(*) FROM elia_user_word_record uwr WHERE uwr.user_id = cm.user_id AND uwr.is_mastered = '1') as masteredWords
        FROM elia_class_member cm
        JOIN sys_user u ON cm.user_id = u.user_id
        WHERE cm.class_id = ? AND cm.member_status = '1'
-       ORDER BY ${orderBy}
+       ORDER BY ${type === 'words' ? 'masteredWords DESC' : 'cm.total_study_time DESC'}
        LIMIT 15`,
       [classId]
     );

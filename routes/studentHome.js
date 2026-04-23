@@ -347,6 +347,94 @@ router.get('/pending-tasks', authMiddleware, async (req, res) => {
 });
 
 /**
+ * GET /api/student-home/class-notifications
+ * 获取班级申请审核通知
+ */
+router.get('/class-notifications', authMiddleware, async (req, res) => {
+  const userId = getUserId(req);
+
+  try {
+    // 查询该学生的所有班级申请记录（已审核的）
+    // 换班申请中 class_id 是目标班级，需要通过 source_teacher_id 关联源班级
+    const [rows] = await pool.query(
+      `SELECT 
+        a.application_id,
+        a.application_type,
+        a.application_status,
+        a.application_reason,
+        a.audit_remark,
+        a.create_time,
+        a.update_time,
+        a.source_approved,
+        a.target_approved,
+        a.source_teacher_id,
+        c.class_name,
+        c.class_level
+       FROM elia_class_application a
+       JOIN elia_class c ON a.class_id = c.class_id
+       WHERE a.applicant_id = ? AND a.application_status IN ('1', '2')
+       ORDER BY a.update_time DESC
+       LIMIT 20`,
+      [userId]
+    );
+
+    // 对于换班申请，需要额外查询源班级名称
+    const data = await Promise.all(rows.map(async r => {
+      let sourceClassName = null;
+      if (r.application_type === '3' && r.source_teacher_id) {
+        // 通过源班级老师ID查询源班级名称
+        const [sourceClassRows] = await pool.query(
+          'SELECT class_name FROM elia_class WHERE teacher_id = ? AND class_status = "1" LIMIT 1',
+          [r.source_teacher_id]
+        );
+        sourceClassName = sourceClassRows[0]?.class_name || null;
+      }
+
+      let content = '';
+      const typeMap = { '1': '入班', '2': '退班', '3': '换班' };
+      const typeText = typeMap[r.application_type] || '未知';
+      
+      if (r.application_type === '1') {
+        content = `您申请加入【${r.class_name}】班级的${typeText}申请`;
+      } else if (r.application_type === '2') {
+        content = `您申请退出【${r.class_name}】班级的${typeText}申请`;
+      } else if (r.application_type === '3') {
+        content = `您申请从【${sourceClassName || '原班级'}】换到【${r.class_name}】的${typeText}申请`;
+      }
+
+      // 根据审核结果补充内容
+      if (r.application_status === '1') {
+        content += '已通过';
+      } else if (r.application_status === '2') {
+        content += '被拒绝';
+      }
+
+      const statusMap = { '0': 'pending', '1': 'approved', '2': 'rejected' };
+
+      return {
+        id: r.application_id,
+        type: r.application_type,
+        typeText: typeText,
+        status: statusMap[r.application_status] || 'pending',
+        content: content,
+        className: r.class_name,
+        classLevel: r.class_level,
+        sourceClassName: sourceClassName,
+        reason: r.audit_remark || null,
+        myReason: r.application_reason,
+        createTime: r.create_time,
+        updateTime: r.update_time
+      };
+    }));
+
+    return res.json({ code: 200, data });
+  } catch (error) {
+    console.error('获取班级申请审核通知错误:', error);
+    return res.status(500).json({ code: 500, message: '服务器错误' });
+  }
+});
+
+/**
  * GET /api/student-home/class-progress
  * 获取班级任务完成进度
  */

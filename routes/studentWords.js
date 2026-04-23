@@ -351,6 +351,52 @@ router.post('/spell-check', authMiddleware, async (req, res) => {
       [userId, wordId, correctIncrement, wrongIncrement, correctIncrement, wrongIncrement]
     );
 
+    // 如果答对，检查是否是新掌握的单词（之前未掌握）
+    if (isCorrect) {
+      const [masteredCheck] = await pool.query(
+        'SELECT is_mastered FROM elia_user_word_record WHERE user_id = ? AND word_id = ?',
+        [userId, wordId]
+      );
+      
+      // 如果之前未掌握，更新为已掌握，并更新学习记录
+      if (masteredCheck.length === 0 || masteredCheck[0].is_mastered !== '1') {
+        // 更新单词为已掌握
+        await pool.query(
+          'UPDATE elia_user_word_record SET is_mastered = "1" WHERE user_id = ? AND word_id = ?',
+          [userId, wordId]
+        );
+        
+        // 更新今日学习记录中的已掌握单词数
+        const today = new Date().toISOString().split('T')[0];
+        await pool.query(
+          `INSERT INTO elia_learning_record (user_id, record_date, words_studied, words_mastered, create_time)
+           VALUES (?, ?, 1, 1, NOW())
+           ON DUPLICATE KEY UPDATE 
+             words_studied = words_studied + 1,
+             words_mastered = words_mastered + 1`,
+          [userId, today]
+        );
+      } else {
+        // 已经掌握的单词，只更新学习数
+        const today = new Date().toISOString().split('T')[0];
+        await pool.query(
+          `INSERT INTO elia_learning_record (user_id, record_date, words_studied, create_time)
+           VALUES (?, ?, 1, NOW())
+           ON DUPLICATE KEY UPDATE words_studied = words_studied + 1`,
+          [userId, today]
+        );
+      }
+    } else {
+      // 答错也记录学习数
+      const today = new Date().toISOString().split('T')[0];
+      await pool.query(
+        `INSERT INTO elia_learning_record (user_id, record_date, words_studied, create_time)
+         VALUES (?, ?, 1, NOW())
+         ON DUPLICATE KEY UPDATE words_studied = words_studied + 1`,
+        [userId, today]
+      );
+    }
+
     return res.json({
       code: 200,
       data: {
@@ -402,6 +448,52 @@ router.post('/fill-blank', authMiddleware, async (req, res) => {
          last_study_time = NOW()`,
       [userId, wordId, correctIncrement, wrongIncrement, correctIncrement, wrongIncrement]
     );
+
+    // 如果答对，检查是否是新掌握的单词（之前未掌握）
+    if (isCorrect) {
+      const [masteredCheck] = await pool.query(
+        'SELECT is_mastered FROM elia_user_word_record WHERE user_id = ? AND word_id = ?',
+        [userId, wordId]
+      );
+      
+      // 如果之前未掌握，更新为已掌握，并更新学习记录
+      if (masteredCheck.length === 0 || masteredCheck[0].is_mastered !== '1') {
+        // 更新单词为已掌握
+        await pool.query(
+          'UPDATE elia_user_word_record SET is_mastered = "1" WHERE user_id = ? AND word_id = ?',
+          [userId, wordId]
+        );
+        
+        // 更新今日学习记录中的已掌握单词数
+        const today = new Date().toISOString().split('T')[0];
+        await pool.query(
+          `INSERT INTO elia_learning_record (user_id, record_date, words_studied, words_mastered, create_time)
+           VALUES (?, ?, 1, 1, NOW())
+           ON DUPLICATE KEY UPDATE 
+             words_studied = words_studied + 1,
+             words_mastered = words_mastered + 1`,
+          [userId, today]
+        );
+      } else {
+        // 已经掌握的单词，只更新学习数
+        const today = new Date().toISOString().split('T')[0];
+        await pool.query(
+          `INSERT INTO elia_learning_record (user_id, record_date, words_studied, create_time)
+           VALUES (?, ?, 1, NOW())
+           ON DUPLICATE KEY UPDATE words_studied = words_studied + 1`,
+          [userId, today]
+        );
+      }
+    } else {
+      // 答错也记录学习数
+      const today = new Date().toISOString().split('T')[0];
+      await pool.query(
+        `INSERT INTO elia_learning_record (user_id, record_date, words_studied, create_time)
+         VALUES (?, ?, 1, NOW())
+         ON DUPLICATE KEY UPDATE words_studied = words_studied + 1`,
+        [userId, today]
+      );
+    }
 
     return res.json({
       code: 200,
